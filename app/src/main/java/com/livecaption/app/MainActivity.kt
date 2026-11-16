@@ -40,7 +40,10 @@ class MainActivity : AppCompatActivity() {
             (
                 TranslateLanguage.getAllLanguages()
                     .map { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.titlecase() } to it } +
-                    OnlineLanguages.ALL.map { (tag, name) -> getString(R.string.online_language, name) to tag }
+                    listOf(
+                        getString(R.string.khmer_gemini) to KhmerTargets.GEMINI,
+                        getString(R.string.khmer_offline) to KhmerTargets.OFFLINE,
+                    )
                 ).sortedBy { it.first }
     }
 
@@ -90,7 +93,8 @@ class MainActivity : AppCompatActivity() {
         targetLanguage.setSelection(targets.indexOfFirst { it.second == prefs.targetTag }.coerceAtLeast(0))
         targetLanguage.onSelected {
             prefs.targetTag = targets[it].second
-            onlineSettings.visibility = if (OnlineLanguages.isOnline(prefs.targetTag)) View.VISIBLE else View.GONE
+            onlineSettings.visibility = if (prefs.targetTag == KhmerTargets.GEMINI) View.VISIBLE else View.GONE
+            offlineKhmerHint.visibility = if (prefs.targetTag == KhmerTargets.OFFLINE) View.VISIBLE else View.GONE
         }
 
         apiKey.setText(prefs.cloudApiKey)
@@ -126,7 +130,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri()))
             return
         }
-        if (OnlineLanguages.isOnline(prefs.targetTag) && prefs.cloudApiKey.isEmpty()) {
+        if (prefs.targetTag == KhmerTargets.GEMINI && prefs.cloudApiKey.isEmpty()) {
             toast(R.string.need_api_key)
             return
         }

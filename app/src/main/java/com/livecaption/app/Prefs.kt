@@ -15,7 +15,7 @@ class Prefs(context: Context) {
         get() = sp.getString("targetTag", "") ?: ""
         set(v) = sp.edit { putString("targetTag", v) }
 
-    /** The user's Google Cloud Translation API key, for online-only languages. */
+    /** The user's Gemini API key, for online Khmer translation. */
     var cloudApiKey: String
         get() = sp.getString("cloudApiKey", "") ?: ""
         set(v) = sp.edit { putString("cloudApiKey", v) }

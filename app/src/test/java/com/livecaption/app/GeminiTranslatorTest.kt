@@ -5,13 +5,14 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import kotlin.concurrent.thread
 
-class CloudTranslatorTest {
+class GeminiTranslatorTest {
 
     private val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
     private val endpoint get() = "http://127.0.0.1:${server.localPort}/v2"
@@ -56,22 +57,22 @@ class CloudTranslatorTest {
 
     @Test
     fun sendsTextAndReturnsKhmerTranslation() {
-        respond(200, """{"data":{"translations":[{"translatedText":"សួស្តី​ពិភពលោក"}]}}""")
-        val result = runBlocking { CloudTranslator("my-key", "en", "km", endpoint).translate("Hello world") }
+        respond(200, """{"candidates":[{"content":{"role":"model","parts":[{"text":"សួស្តី​ពិភពលោក\n"}]}}]}""")
+        val result = runBlocking { GeminiTranslator(null, "my-key", "English", "Khmer", endpoint).translate("Hello world") }
         assertEquals("សួស្តី​ពិភពលោក", result)
         assertEquals("my-key", requestKey)
         val request = requestBody!!
-        assertEquals("Hello world", request.getJSONArray("q").getString(0))
-        assertEquals("en", request.getString("source"))
-        assertEquals("km", request.getString("target"))
-        assertEquals("text", request.getString("format"))
+        val sent = request.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0)
+        assertEquals("Hello world", sent.getString("text"))
+        val instruction = request.getJSONObject("system_instruction").getJSONArray("parts").getJSONObject(0)
+        assertTrue(instruction.getString("text").contains("from English into Khmer"))
     }
 
     @Test
     fun reportsTheServiceErrorMessage() {
         respond(400, """{"error":{"code":400,"message":"API key not valid. Please pass a valid API key."}}""")
         val error = assertThrows(IOException::class.java) {
-            runBlocking { CloudTranslator("bad", "en", "km", endpoint).prepare() }
+            runBlocking { GeminiTranslator(null, "bad", "English", "Khmer", endpoint).prepare {} }
         }
         assertEquals("API key not valid. Please pass a valid API key.", error.message)
     }

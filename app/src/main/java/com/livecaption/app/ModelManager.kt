@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -36,7 +37,14 @@ object ModelManager {
         val zip = File(context.cacheDir, "${language.modelName}.zip")
         val staging = File(root, "${language.modelName}.tmp")
         try {
-            download(language.url, zip, onProgress)
+            var lastPercent = -1
+            downloadFile(language.url, zip) { done ->
+                val percent = (done * 100 / (language.sizeMb * 1024L * 1024L)).toInt().coerceAtMost(99)
+                if (percent != lastPercent) {
+                    lastPercent = percent
+                    onProgress(percent)
+                }
+            }
             onProgress(-1)
             staging.deleteRecursively()
             zip.inputStream().use { unzip(it, staging) }
@@ -50,30 +58,41 @@ object ModelManager {
         }
     }
 
-    private suspend fun download(url: String, dest: File, onProgress: (Int) -> Unit) {
+    /**
+     * Downloads [url] to [dest], resuming a previous partial download. Does nothing if
+     * [dest] already exists. [onProgress] receives the number of bytes on disk so far.
+     */
+    suspend fun downloadFile(url: String, dest: File, onProgress: (Long) -> Unit) = withContext(Dispatchers.IO) {
+        if (dest.isFile) return@withContext
+        val part = File(dest.parentFile, dest.name + ".part")
+        var done = if (part.isFile) part.length() else 0L
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 20_000
         conn.readTimeout = 30_000
+        if (done > 0) conn.setRequestProperty("Range", "bytes=$done-")
         try {
-            if (conn.responseCode != 200) throw IOException("Model download failed (HTTP ${conn.responseCode})")
-            val total = conn.contentLengthLong
-            var done = 0L
-            var lastPercent = -1
+            when (conn.responseCode) {
+                HttpURLConnection.HTTP_PARTIAL -> Unit
+                HttpURLConnection.HTTP_OK -> done = 0 // Server ignored the range: start over.
+                416 -> { // Our partial file is not a valid prefix: discard it and fail this attempt.
+                    part.delete()
+                    throw IOException("Download could not be resumed, please try again")
+                }
+                else -> throw IOException("Download failed (HTTP ${conn.responseCode})")
+            }
             conn.inputStream.use { input ->
-                dest.outputStream().use { output ->
+                FileOutputStream(part, done > 0).use { output ->
                     val buf = ByteArray(64 * 1024)
+                    var reported = 0L
                     while (true) {
                         coroutineContext.ensureActive()
                         val n = input.read(buf)
                         if (n < 0) break
                         output.write(buf, 0, n)
                         done += n
-                        if (total > 0) {
-                            val percent = (done * 100 / total).toInt()
-                            if (percent != lastPercent) {
-                                lastPercent = percent
-                                onProgress(percent)
-                            }
+                        if (done - reported >= 512 * 1024) {
+                            reported = done
+                            onProgress(done)
                         }
                     }
                 }
@@ -81,6 +100,7 @@ object ModelManager {
         } finally {
             conn.disconnect()
         }
+        if (!part.renameTo(dest)) throw IOException("Could not save ${dest.name}")
     }
 
     fun unzip(input: InputStream, destDir: File) {

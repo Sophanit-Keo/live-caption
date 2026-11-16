@@ -44,8 +44,7 @@ import java.io.IOException
 
 /**
  * Foreground service that captures audio (device playback or microphone),
- * transcribes it on-device with Vosk, translates it (on-device with ML Kit, or
- * online for languages ML Kit lacks),
+ * transcribes it on-device with Vosk, translates it (ML Kit, offline NLLB or Gemini),
  * and renders the result in a floating overlay.
  */
 class CaptionService : Service() {
@@ -152,17 +151,11 @@ class CaptionService : Service() {
 
             try {
                 if (targetTag != null) {
-                    val online = OnlineLanguages.isOnline(targetTag)
-                    status(
-                        getString(
-                            if (online) R.string.status_connecting_translation
-                            else R.string.status_downloading_translation,
-                        ),
-                    )
-                    translator = (
-                        if (online) CloudTranslator(cloudApiKey, language.translateTag, targetTag)
-                        else MlKitTranslator(language.translateTag, targetTag)
-                        ).also { it.prepare() }
+                    translator = when (targetTag) {
+                        KhmerTargets.GEMINI -> GeminiTranslator(this, cloudApiKey, language.label, "Khmer")
+                        KhmerTargets.OFFLINE -> OfflineKhmerTranslator(this, language.translateTag)
+                        else -> MlKitTranslator(this, language.translateTag, targetTag)
+                    }.also { it.prepare(::status) }
                     scope.launch { translateFinals() }
                     scope.launch { translatePartials() }
                 }
@@ -221,7 +214,10 @@ class CaptionService : Service() {
     }
 
     private suspend fun translateFinals() {
-        for (text in pendingFinals) {
+        for (first in pendingFinals) {
+            // If translation is slower than speech, skip ahead to the newest sentence.
+            var text = first
+            while (true) text = pendingFinals.tryReceive().getOrNull() ?: break
             val result = translate(text) ?: continue
             translated.commit(result)
             render()
@@ -230,6 +226,7 @@ class CaptionService : Service() {
 
     /** Translates the sentence in progress; always works on the newest partial. */
     private suspend fun translatePartials() {
+        val interval = translator?.partialIntervalMs ?: return
         pendingPartial.collect { (id, text) ->
             if (text.isEmpty() || id != utterance) return@collect
             val result = translate(text) ?: return@collect
@@ -237,7 +234,7 @@ class CaptionService : Service() {
                 translated.setLive(result)
                 render()
             }
-            delay(translator?.partialIntervalMs ?: 0)
+            delay(interval)
         }
     }
 

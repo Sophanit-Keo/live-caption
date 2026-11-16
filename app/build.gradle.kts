@@ -33,6 +33,13 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
+    testOptions {
+        unitTests.all {
+            // Optional: directory holding the NLLB model files, enables NllbModelTest.
+            it.systemProperty("nllb.dir", System.getenv("NLLB_DIR") ?: "")
+            it.maxHeapSize = "3g"
+        }
+    }
     buildFeatures {
         viewBinding = true
     }
@@ -51,6 +58,12 @@ dependencies {
     // Offline translation.
     implementation("com.google.mlkit:translate:17.0.3")
 
+    // Offline Khmer translation (NLLB-200 on ONNX Runtime).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
+    implementation("com.google.code.gson:gson:2.13.2")
+
     testImplementation("junit:junit:4.13.2")
+    // Desktop ONNX Runtime, for running the real model in NllbModelTest.
+    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.32.0")
     testImplementation("org.json:json:20250517")
 }

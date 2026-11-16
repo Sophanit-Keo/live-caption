@@ -34,6 +34,14 @@ class CaptionLineTest {
     }
 
     @Test
+    fun khmerTextIsNeverCutInsideACharacterCluster() {
+        // No spaces, and every syllable is consonant + vowel sign: a cut must land between syllables.
+        val line = CaptionLine(maxChars = 7)
+        line.commit("កាកាកាកាកា")
+        assertEquals("…កាកាកា", line.render())
+    }
+
+    @Test
     fun parsesVoskJson() {
         assertEquals("good morning", parseVoskResult("""{"text" : "good morning"}""", "text"))
         assertEquals("good", parseVoskResult("""{"partial" : "good"}""", "partial"))

@@ -1,6 +1,7 @@
 package com.livecaption.app
 
 import org.json.JSONObject
+import java.text.BreakIterator
 
 /**
  * One row of rolling subtitle text: the last finished sentence plus the
@@ -9,6 +10,10 @@ import org.json.JSONObject
 class CaptionLine(private val maxChars: Int = 160) {
     private var committed = ""
     private var live = ""
+
+    private companion object {
+        const val MAX_WORD_SEARCH = 24
+    }
 
     /** Update the in-progress sentence. */
     fun setLive(text: String) {
@@ -29,10 +34,14 @@ class CaptionLine(private val maxChars: Int = 160) {
     fun render(): String {
         val full = listOf(committed, live).filter { it.isNotEmpty() }.joinToString(" ")
         if (full.length <= maxChars) return full
-        val tail = full.substring(full.length - maxChars)
-        // Cut at a word boundary when there is one, so we never show half a word.
-        val space = tail.indexOf(' ')
-        return "…" + if (space in 0 until tail.length - 1) tail.substring(space + 1) else tail
+        val cut = full.length - maxChars
+        // Cut at a nearby word boundary when there is one, so we never show half a word.
+        val space = full.indexOf(' ', cut)
+        if (space in cut until cut + MAX_WORD_SEARCH) return "…" + full.substring(space + 1)
+        // Scripts written without spaces (Khmer, Chinese, …): never split a character cluster.
+        val clusters = BreakIterator.getCharacterInstance().apply { setText(full) }
+        val start = if (clusters.isBoundary(cut)) cut else clusters.following(cut)
+        return "…" + full.substring(start)
     }
 }
 

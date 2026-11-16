@@ -19,6 +19,11 @@
     <string name="status_unpacking_speech">Unpacking speech model…</string>
     <string name="status_loading_speech">Loading speech model…</string>
     <string name="status_downloading_translation">Downloading translation model…</string>
+    <string name="status_connecting_translation">Connecting to the translation service…</string>
+    <string name="online_language">%1$s (online)</string>
+    <string name="api_key">Google Cloud Translation API key</string>
+    <string name="api_key_hint">This language is translated online: the caption text (not the audio) is sent to Google Cloud Translation using your own key, and needs internet. Create a key in Google Cloud Console with the Cloud Translation API enabled.</string>
+    <string name="need_api_key">Enter your Google Cloud Translation API key to translate into this language.</string>
     <string name="status_error">Error: %1$s</string>
     <string name="need_mic_permission">Audio recording permission is required to transcribe speech.</string>
     <string name="need_overlay_permission">Allow \"Display over other apps\" so captions can float on top, then tap Start again.</string>

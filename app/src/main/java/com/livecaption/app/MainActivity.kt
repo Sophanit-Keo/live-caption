@@ -20,6 +20,7 @@ import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -36,9 +37,11 @@ class MainActivity : AppCompatActivity() {
     /** Translation targets: display name → ML Kit tag ("" = no translation). */
     private val targets: List<Pair<String, String>> by lazy {
         listOf(getString(R.string.no_translation) to "") +
-            TranslateLanguage.getAllLanguages()
-                .map { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.titlecase() } to it }
-                .sortedBy { it.first }
+            (
+                TranslateLanguage.getAllLanguages()
+                    .map { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.titlecase() } to it } +
+                    OnlineLanguages.ALL.map { (tag, name) -> getString(R.string.online_language, name) to tag }
+                ).sortedBy { it.first }
     }
 
     private val requestPermissions =
@@ -85,7 +88,13 @@ class MainActivity : AppCompatActivity() {
 
         targetLanguage.adapter = dropdown(targets.map { it.first })
         targetLanguage.setSelection(targets.indexOfFirst { it.second == prefs.targetTag }.coerceAtLeast(0))
-        targetLanguage.onSelected { prefs.targetTag = targets[it].second }
+        targetLanguage.onSelected {
+            prefs.targetTag = targets[it].second
+            onlineSettings.visibility = if (OnlineLanguages.isOnline(prefs.targetTag)) View.VISIBLE else View.GONE
+        }
+
+        apiKey.setText(prefs.cloudApiKey)
+        apiKey.doAfterTextChanged { prefs.cloudApiKey = it?.toString()?.trim().orEmpty() }
 
         audioSource.check(if (prefs.useMicrophone) R.id.sourceMic else R.id.sourceDevice)
         audioSourceHint.setText(if (prefs.useMicrophone) R.string.source_mic_hint else R.string.source_device_hint)
@@ -117,6 +126,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri()))
             return
         }
+        if (OnlineLanguages.isOnline(prefs.targetTag) && prefs.cloudApiKey.isEmpty()) {
+            toast(R.string.need_api_key)
+            return
+        }
         if (prefs.useMicrophone) {
             CaptionService.start(this)
         } else {
@@ -142,7 +155,7 @@ class MainActivity : AppCompatActivity() {
         }
         // Settings are read when captions start, so lock them while running.
         val editable = !status.isActive
-        listOf(sourceLanguage, targetLanguage, sourceDevice, sourceMic, showOriginal, textSize)
+        listOf(sourceLanguage, targetLanguage, apiKeyLayout, sourceDevice, sourceMic, showOriginal, textSize)
             .forEach { it.isEnabled = editable }
     }
 

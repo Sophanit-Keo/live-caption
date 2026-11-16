@@ -25,20 +25,16 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.Translator
-import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.vosk.LibVosk
 import org.vosk.LogLevel
@@ -48,7 +44,8 @@ import java.io.IOException
 
 /**
  * Foreground service that captures audio (device playback or microphone),
- * transcribes it on-device with Vosk, translates it on-device with ML Kit,
+ * transcribes it on-device with Vosk, translates it (on-device with ML Kit, or
+ * online for languages ML Kit lacks),
  * and renders the result in a floating overlay.
  */
 class CaptionService : Service() {
@@ -58,7 +55,7 @@ class CaptionService : Service() {
 
     private var projection: MediaProjection? = null
     private var overlay: CaptionOverlay? = null
-    private var translator: Translator? = null
+    private var translator: TextTranslator? = null
     private var showOriginal = true
 
     private val original = CaptionLine()
@@ -106,7 +103,7 @@ class CaptionService : Service() {
 
         scope.launch {
             try {
-                run(language, targetTag, useMic, resultCode, projectionData, prefs.textSizeSp)
+                run(language, targetTag, prefs.cloudApiKey, useMic, resultCode, projectionData, prefs.textSizeSp)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -119,6 +116,7 @@ class CaptionService : Service() {
     private suspend fun run(
         language: SpeechLanguage,
         targetTag: String?,
+        cloudApiKey: String,
         useMic: Boolean,
         resultCode: Int,
         projectionData: Intent?,
@@ -154,14 +152,17 @@ class CaptionService : Service() {
 
             try {
                 if (targetTag != null) {
-                    status(getString(R.string.status_downloading_translation))
-                    val options = TranslatorOptions.Builder()
-                        .setSourceLanguage(language.translateTag)
-                        .setTargetLanguage(targetTag)
-                        .build()
-                    translator = Translation.getClient(options).also {
-                        it.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
-                    }
+                    val online = OnlineLanguages.isOnline(targetTag)
+                    status(
+                        getString(
+                            if (online) R.string.status_connecting_translation
+                            else R.string.status_downloading_translation,
+                        ),
+                    )
+                    translator = (
+                        if (online) CloudTranslator(cloudApiKey, language.translateTag, targetTag)
+                        else MlKitTranslator(language.translateTag, targetTag)
+                        ).also { it.prepare() }
                     scope.launch { translateFinals() }
                     scope.launch { translatePartials() }
                 }
@@ -236,12 +237,13 @@ class CaptionService : Service() {
                 translated.setLive(result)
                 render()
             }
+            delay(translator?.partialIntervalMs ?: 0)
         }
     }
 
     private suspend fun translate(text: String): String? =
         try {
-            translator?.translate(text)?.await()
+            translator?.translate(text)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

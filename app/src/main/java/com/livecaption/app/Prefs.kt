@@ -15,6 +15,11 @@ class Prefs(context: Context) {
         get() = sp.getString("targetTag", "") ?: ""
         set(v) = sp.edit { putString("targetTag", v) }
 
+    /** The user's Google Cloud Translation API key, for online-only languages. */
+    var cloudApiKey: String
+        get() = sp.getString("cloudApiKey", "") ?: ""
+        set(v) = sp.edit { putString("cloudApiKey", v) }
+
     var useMicrophone: Boolean
         get() = sp.getBoolean("useMicrophone", false)
         set(v) = sp.edit { putBoolean("useMicrophone", v) }

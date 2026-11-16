@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">Live Caption</string>
+    <string name="tagline">Subtitles and translation on top of any app</string>
+    <string name="spoken_language">Spoken language</string>
+    <string name="translate_to">Translate to</string>
+    <string name="no_translation">No translation (captions only)</string>
+    <string name="audio_source">Audio source</string>
+    <string name="source_device">Device audio</string>
+    <string name="source_mic">Microphone</string>
+    <string name="source_device_hint">Captions whatever is playing on the phone. Some apps (calls, certain streaming and music apps) block audio capture — use Microphone for those.</string>
+    <string name="source_mic_hint">Captions speech around you, or the phone\'s own speaker.</string>
+    <string name="show_original">Show original text above translation</string>
+    <string name="text_size">Caption text size</string>
+    <string name="start">Start captions</string>
+    <string name="stop">Stop captions</string>
+    <string name="status_idle">Ready. Language models download on first use (30–140 MB), then everything runs offline.</string>
+    <string name="status_running">Captions are running. Switch to any app.</string>
+    <string name="status_downloading_speech">Downloading speech model… %1$d%%</string>
+    <string name="status_unpacking_speech">Unpacking speech model…</string>
+    <string name="status_loading_speech">Loading speech model…</string>
+    <string name="status_downloading_translation">Downloading translation model…</string>
+    <string name="status_error">Error: %1$s</string>
+    <string name="need_mic_permission">Audio recording permission is required to transcribe speech.</string>
+    <string name="need_overlay_permission">Allow \"Display over other apps\" so captions can float on top, then tap Start again.</string>
+    <string name="capture_denied">Screen/audio capture was not allowed.</string>
+    <string name="notification_channel">Live captions</string>
+    <string name="notification_title">Live Caption is running</string>
+    <string name="notification_text">Tap to open settings</string>
+    <string name="listening">Listening…</string>
+    <string name="close">Close captions</string>
+</resources>

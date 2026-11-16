@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textAppearance="?attr/textAppearanceHeadlineMedium" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:text="@string/tagline"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/sourceLanguage"
+            android:text="@string/spoken_language"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <Spinner
+            android:id="@+id/sourceLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/targetLanguage"
+            android:text="@string/translate_to"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <Spinner
+            android:id="@+id/targetLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/audio_source"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/audioSource"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <Button
+                android:id="@+id/sourceDevice"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/source_device" />
+
+            <Button
+                android:id="@+id/sourceMic"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/source_mic" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:id="@+id/audioSourceHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="16dp"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/showOriginal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/show_original" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_size"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/textSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/text_size"
+            android:stepSize="1"
+            android:valueFrom="12"
+            android:valueTo="32" />
+
+        <Button
+            android:id="@+id/toggle"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="16dp"
+            android:text="@string/start" />
+
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:indeterminate="true"
+            android:visibility="invisible" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/status_idle"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+    </LinearLayout>
+</ScrollView>

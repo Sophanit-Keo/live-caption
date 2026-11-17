@@ -10,6 +10,13 @@
     <string name="source_device_hint">Captions whatever is playing on the phone. Some apps (calls, certain streaming and music apps) block audio capture — use Microphone for those.</string>
     <string name="source_mic_hint">Captions speech around you, or the phone\'s own speaker.</string>
     <string name="show_original">Show original text above translation</string>
+    <string name="speak_translation">Speak translation in headphones</string>
+    <string name="speak_hint">Reads each translated sentence aloud while wired or Bluetooth headphones are connected. The original sound is turned down while the voice speaks.</string>
+    <string name="speak_needs_translation">Choose a language under \"Translate to\" to hear it spoken.</string>
+    <string name="speak_headphones_connected">Headphones connected. The translation will be spoken in them.</string>
+    <string name="speak_no_headphones">No headphones connected. Captions still show; the voice starts when you connect wired or Bluetooth headphones.</string>
+    <string name="status_loading_voice">Starting the voice…</string>
+    <string name="no_voice">No %1$s voice is installed, so the translation will not be spoken. Add one in Settings → Text-to-speech output.</string>
     <string name="text_size">Caption text size</string>
     <string name="start">Start captions</string>
     <string name="stop">Stop captions</string>

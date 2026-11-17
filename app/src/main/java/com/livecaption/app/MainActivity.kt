@@ -3,6 +3,8 @@ package com.livecaption.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioDeviceCallback
+import android.media.AudioManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -33,6 +35,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: Prefs
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private var headphoneWatch: AudioDeviceCallback? = null
+    private var headphonesConnected = false
 
     /** Translation targets: display name → ML Kit tag ("" = no translation). */
     private val targets: List<Pair<String, String>> by lazy {
@@ -95,6 +100,7 @@ class MainActivity : AppCompatActivity() {
             prefs.targetTag = targets[it].second
             onlineSettings.visibility = if (prefs.targetTag == KhmerTargets.GEMINI) View.VISIBLE else View.GONE
             offlineKhmerHint.visibility = if (prefs.targetTag == KhmerTargets.OFFLINE) View.VISIBLE else View.GONE
+            showSpeakHint()
         }
 
         apiKey.setText(prefs.cloudApiKey)
@@ -111,8 +117,40 @@ class MainActivity : AppCompatActivity() {
         showOriginal.isChecked = prefs.showOriginal
         showOriginal.setOnCheckedChangeListener { _, checked -> prefs.showOriginal = checked }
 
+        speakTranslation.isChecked = prefs.speakTranslation
+        speakTranslation.setOnCheckedChangeListener { _, checked ->
+            prefs.speakTranslation = checked
+            showSpeakHint()
+        }
+
         textSize.value = prefs.textSizeSp.coerceIn(textSize.valueFrom, textSize.valueTo)
         textSize.addOnChangeListener { _, value, _ -> prefs.textSizeSp = value }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        headphoneWatch = Headphones.watch(audioManager) { connected ->
+            headphonesConnected = connected
+            showSpeakHint()
+        }
+    }
+
+    override fun onStop() {
+        headphoneWatch?.let { Headphones.unwatch(audioManager, it) }
+        headphoneWatch = null
+        super.onStop()
+    }
+
+    /** Explains the spoken-translation switch, and what it is waiting for once it is on. */
+    private fun showSpeakHint() {
+        binding.speakHint.setText(
+            when {
+                !prefs.speakTranslation -> R.string.speak_hint
+                prefs.targetTag.isEmpty() -> R.string.speak_needs_translation
+                headphonesConnected -> R.string.speak_headphones_connected
+                else -> R.string.speak_no_headphones
+            },
+        )
     }
 
     private fun startCaptions() {
@@ -159,7 +197,7 @@ class MainActivity : AppCompatActivity() {
         }
         // Settings are read when captions start, so lock them while running.
         val editable = !status.isActive
-        listOf(sourceLanguage, targetLanguage, apiKeyLayout, sourceDevice, sourceMic, showOriginal, textSize)
+        listOf(sourceLanguage, targetLanguage, apiKeyLayout, sourceDevice, sourceMic, showOriginal, speakTranslation, textSize)
             .forEach { it.isEnabled = editable }
     }
 

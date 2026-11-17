@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -45,7 +46,7 @@ import java.io.IOException
 /**
  * Foreground service that captures audio (device playback or microphone),
  * transcribes it on-device with Vosk, translates it (ML Kit, offline NLLB or Gemini),
- * and renders the result in a floating overlay.
+ * renders the result in a floating overlay, and can read the translation aloud in headphones.
  */
 class CaptionService : Service() {
 
@@ -55,6 +56,7 @@ class CaptionService : Service() {
     private var projection: MediaProjection? = null
     private var overlay: CaptionOverlay? = null
     private var translator: TextTranslator? = null
+    private var speaker: TranslationSpeaker? = null
     private var showOriginal = true
 
     private val original = CaptionLine()
@@ -102,7 +104,10 @@ class CaptionService : Service() {
 
         scope.launch {
             try {
-                run(language, targetTag, prefs.cloudApiKey, useMic, resultCode, projectionData, prefs.textSizeSp)
+                run(
+                    language, targetTag, prefs.cloudApiKey, useMic, resultCode, projectionData,
+                    prefs.textSizeSp, prefs.speakTranslation,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -120,6 +125,7 @@ class CaptionService : Service() {
         resultCode: Int,
         projectionData: Intent?,
         textSizeSp: Float,
+        speakTranslation: Boolean,
     ) {
         // Claim the capture session right away: the consent token expires if left unused.
         val record = if (useMic) {
@@ -156,6 +162,7 @@ class CaptionService : Service() {
                         KhmerTargets.OFFLINE -> OfflineKhmerTranslator(this, language.translateTag)
                         else -> MlKitTranslator(this, language.translateTag, targetTag)
                     }.also { it.prepare(::status) }
+                    if (speakTranslation) prepareSpeaker(targetTag)
                     scope.launch { translateFinals() }
                     scope.launch { translatePartials() }
                 }
@@ -168,6 +175,18 @@ class CaptionService : Service() {
             }
         } finally {
             record.release()
+        }
+    }
+
+    /** Captions keep working without a voice, so a missing one is reported rather than fatal. */
+    private suspend fun prepareSpeaker(targetTag: String) {
+        status(getString(R.string.status_loading_voice))
+        val locale = TranslationSpeaker.localeFor(targetTag)
+        val speaker = TranslationSpeaker(this, locale).also { this.speaker = it }
+        if (!speaker.prepare()) {
+            speaker.close()
+            this.speaker = null
+            Toast.makeText(this, getString(R.string.no_voice, locale.displayLanguage), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -220,6 +239,7 @@ class CaptionService : Service() {
             while (true) text = pendingFinals.tryReceive().getOrNull() ?: break
             val result = translate(text) ?: continue
             translated.commit(result)
+            speaker?.speak(result)
             render()
         }
     }
@@ -308,6 +328,7 @@ class CaptionService : Service() {
         scope.cancel()
         overlay?.hide()
         translator?.close()
+        speaker?.close()
         projection?.let {
             it.unregisterCallback(projectionCallback)
             it.stop()

@@ -28,6 +28,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("showOriginal", true)
         set(v) = sp.edit { putBoolean("showOriginal", v) }
 
+    /** Read the translation aloud while headphones are connected. */
+    var speakTranslation: Boolean
+        get() = sp.getBoolean("speakTranslation", false)
+        set(v) = sp.edit { putBoolean("speakTranslation", v) }
+
     var textSizeSp: Float
         get() = sp.getFloat("textSizeSp", 18f)
         set(v) = sp.edit { putFloat("textSizeSp", v) }

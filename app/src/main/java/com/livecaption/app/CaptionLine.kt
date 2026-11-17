@@ -45,6 +45,19 @@ class CaptionLine(private val maxChars: Int = 160) {
     }
 }
 
+/**
+ * True when [next] extends or lightly revises [previous] (the same sentence, a few
+ * more words) rather than replacing it. The overlay shows such updates instantly
+ * and saves its cross-fade for when the text really changes.
+ */
+fun isContinuation(previous: String, next: String): Boolean {
+    if (previous.isEmpty() || next.isEmpty()) return false
+    // Text trimmed from the front scrolls on every update; fading each step would flicker.
+    if (next.startsWith("…")) return true
+    val shared = previous.commonPrefixWith(next).length
+    return shared * 2 >= minOf(previous.length, next.length)
+}
+
 /** Pulls [key] ("text" or "partial") out of a Vosk JSON result. */
 fun parseVoskResult(json: String, key: String): String =
     try {

@@ -7,7 +7,9 @@ floating box on top of any app.
 
 ```
 device audio / microphone ─▶ Vosk speech-to-text ─▶ ML Kit translation ─▶ floating overlay
-   (MediaProjection)            (on-device)            (on-device)        (draws over apps)
+   (MediaProjection)            (on-device)            (on-device)     │  (draws over apps)
+                                                                       └▶ spoken in headphones
+                                                                          (text-to-speech, optional)
 ```
 
 - **Audio**: "Device audio" captures what other apps are playing (Android 10+ playback
@@ -15,6 +17,8 @@ device audio / microphone ─▶ Vosk speech-to-text ─▶ ML Kit translation �
 - **Speech-to-text**: [Vosk](https://alphacephei.com/vosk/) small models, 25 spoken languages.
 - **Translation**: Google ML Kit on-device translation, ~59 target languages, plus **Khmer**
   through Gemini (online) or an offline NLLB model (see below).
+- **Spoken translation**: optionally reads each translated sentence aloud in your headphones
+  (see below).
 - **Offline**: models are downloaded once on first use (speech 30–140 MB, translation ~30 MB);
   after that no audio or text leaves the phone (except caption text when using Gemini).
 
@@ -35,6 +39,22 @@ Every push also builds the APK in GitHub Actions (see the run's **Artifacts**).
 2. Tap **Start captions** and grant: microphone/audio recording, "Display over other apps",
    and (for device audio) the screen-capture prompt.
 3. Switch to any app. Drag the caption box up or down; tap ✕ or the notification to stop.
+
+## Spoken translation in headphones
+
+Turn on **Speak translation in headphones** and connect wired, USB or Bluetooth headphones:
+each finished sentence is translated and then read aloud by the phone's text-to-speech voice,
+while the original sound is turned down under it.
+
+- The voice only plays while headphones are connected, never on the phone speaker — there the
+  microphone would hear it and caption it again. Plug headphones in or out at any time; the
+  settings screen shows whether they are detected.
+- It speaks whole sentences, so the voice follows a sentence or so behind the speaker. If it
+  falls behind it talks a little faster, then skips to the newest sentence.
+- The voice comes from the phone's text-to-speech engine. If the target language has no voice
+  installed (the app tells you), add one in Android Settings → Text-to-speech output. Google's
+  engine includes Khmer.
+- It needs a translation language; captions-only mode has nothing to speak.
 
 ## Khmer
 
@@ -72,7 +92,8 @@ every 6 seconds.
 | --- | --- |
 | `MainActivity` | Settings screen, permission flow |
 | `CaptionService` | Foreground service: capture → recognise → translate |
-| `CaptionOverlay` | Floating, draggable subtitle window |
+| `CaptionOverlay` | Floating, draggable subtitle window and its fade / roll-up animations |
+| `TranslationSpeaker` | Reads translations aloud; headphone detection |
 | `TextTranslator` | ML Kit, Gemini and offline-Khmer translators |
 | `NllbTranslator`, `NllbTokenizer` | Offline NLLB-200 inference and its tokenizer |
 | `ModelManager` | Downloads and unpacks speech models |

@@ -80,7 +80,11 @@ class NllbTranslator(modelDir: File, sourceLanguage: String, targetLanguage: Str
                 val token = argmaxLast(result.get("logits").get() as OnnxTensor)
                 if (token == tokenizer.eos) break
                 output.add(token)
-                if (isLooping(output)) break
+                val cut = loopCut(output)
+                if (cut != null) {
+                    while (output.size > cut) output.removeAt(output.size - 1)
+                    break
+                }
                 next = longArrayOf(token.toLong())
             }
         } finally {
@@ -123,18 +127,30 @@ class NllbTranslator(modelDir: File, sourceLanguage: String, targetLanguage: Str
         return best
     }
 
-    /** Greedy decoding can get stuck repeating itself; detect a repeated 4-token run. */
-    private fun isLooping(tokens: List<Int>): Boolean {
-        val n = tokens.size
-        return n >= 8 && tokens.subList(n - 4, n) == tokens.subList(n - 8, n - 4)
-    }
-
     override fun close() {
         encoder.close()
         decoder.close()
     }
 
     companion object {
+        /**
+         * Greedy decoding can get stuck repeating itself ("… the the the …"). If the end of
+         * [tokens] is such a loop, returns the length to cut back to (keeping one copy); else null.
+         * Words that legitimately appear twice, or a single doubled word, are left alone.
+         */
+        fun loopCut(tokens: List<Int>): Int? {
+            val n = tokens.size
+            for (period in 1..MAX_LOOP_PERIOD) {
+                val copies = if (period < 3) 3 else 2
+                if (n < period * copies) continue
+                val looping = (1 until copies).all { r ->
+                    (0 until period).all { k -> tokens[n - 1 - k] == tokens[n - 1 - k - r * period] }
+                }
+                if (looping) return n - (copies - 1) * period
+            }
+            return null
+        }
+
         const val TOKENIZER_FILE = "tokenizer.json"
         const val ENCODER_FILE = "encoder_model_quantized.onnx"
         const val DECODER_FILE = "decoder_model_merged_quantized.onnx"
@@ -145,6 +161,7 @@ class NllbTranslator(modelDir: File, sourceLanguage: String, targetLanguage: Str
         private const val MAX_OUTPUT_TOKENS = 160
         private const val DEFAULT_HEADS = 16L
         private const val DEFAULT_HEAD_SIZE = 64L
+        private const val MAX_LOOP_PERIOD = 10
 
         /** ML Kit / ISO language tag → NLLB language code, for every speech language the app offers. */
         val LANGUAGE_CODES = mapOf(

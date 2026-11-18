@@ -20,50 +20,84 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import org.vosk.LibVosk
 import org.vosk.LogLevel
 import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.TimeUnit
 
 /**
- * Foreground service that captures audio (device playback or microphone),
- * transcribes it on-device with Vosk, translates it (ML Kit, offline NLLB or Gemini),
- * and renders the result in a floating overlay.
+ * Foreground service that captures audio (device playback or microphone) and shows
+ * translated captions in a floating overlay, optionally speaking the translation.
+ *
+ * - Offline / Gemini engines: Vosk transcribes on the phone, the text is translated (ML Kit,
+ *   NLLB or Gemini), and the phone's text-to-speech voice reads finished sentences.
+ * - Gemini Live engine: the audio itself goes to Gemini Live Translate, which returns
+ *   translated speech plus transcripts of both sides.
  */
 class CaptionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val clock = { SystemClock.elapsedRealtime() }
     private var started = false
+    private var failed = false
+    private lateinit var prefs: Prefs
 
     private var projection: MediaProjection? = null
     private var overlay: CaptionOverlay? = null
-    private var translator: TextTranslator? = null
     private var showOriginal = true
+    private var useMic = false
+    private var engine = TranslationEngine.OFFLINE
+    private var target: TargetLanguage? = null
+    private var sourceTag = "en"
 
+    // Offline / Gemini text engines.
+    private var translator: TextTranslator? = null
+    private var pipeline: TranslationPipeline? = null
     private val original = CaptionLine()
     private val translated = CaptionLine()
 
-    /** Bumped at every finished sentence so late partial translations are dropped. */
-    private var utterance = 0
-    private val pendingPartial = MutableStateFlow(0 to "")
-    private val pendingFinals = Channel<String>(Channel.UNLIMITED)
+    // Gemini Live engine.
+    private var http: OkHttpClient? = null
+    private var live: LiveTranslator? = null
+    private val liveOriginal = RollingText(clock = clock)
+    private val liveTranslated = RollingText(clock = clock)
+
+    // Spoken translation.
+    private var headphones: HeadphoneMonitor? = null
+    private var focus: VoiceFocus? = null
+    private var tts: TtsVoice? = null
+    private var ttsLookup: Job? = null
+    private var player: PcmPlayer? = null
+    private var voiceOn = false
+    private var voiceSpeaking = false
+
+    /** Microphone + phone speaker: the microphone would hear our own voice, so it is muted while we speak. */
+    @Volatile private var muteInput = false
+    private var warnedRateLimit = false
+    private var warnedError = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() = stopSelf()
@@ -79,9 +113,11 @@ class CaptionService : Service() {
         if (started) return START_NOT_STICKY
         started = true
 
-        val prefs = Prefs(this)
-        val useMic = prefs.useMicrophone
+        prefs = Prefs(this)
+        useMic = prefs.useMicrophone
         showOriginal = prefs.showOriginal
+        engine = prefs.engine
+        voiceOn = prefs.voiceEnabled
 
         // Must be in the foreground (with the right type) before touching MediaProjection.
         try {
@@ -96,13 +132,17 @@ class CaptionService : Service() {
         }
 
         val language = SpeechLanguage.byModelName(prefs.sourceModel)
-        val targetTag = prefs.targetTag.takeIf { it.isNotEmpty() && it != language.translateTag }
+        sourceTag = language.translateTag
+        target = TargetLanguage.catalog(TranslateLanguage.getAllLanguages())
+            .firstOrNull { it.tag == prefs.targetTag }
+            // Translating into the spoken language is pointless (Gemini Live detects the language itself).
+            ?.takeIf { engine == TranslationEngine.LIVE || it.tag != language.translateTag }
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val projectionData = IntentCompat.getParcelableExtra(intent, EXTRA_PROJECTION_DATA, Intent::class.java)
 
         scope.launch {
             try {
-                run(language, targetTag, prefs.cloudApiKey, useMic, resultCode, projectionData, prefs.textSizeSp)
+                run(language, resultCode, projectionData)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -112,15 +152,7 @@ class CaptionService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun run(
-        language: SpeechLanguage,
-        targetTag: String?,
-        cloudApiKey: String,
-        useMic: Boolean,
-        resultCode: Int,
-        projectionData: Intent?,
-        textSizeSp: Float,
-    ) {
+    private suspend fun run(language: SpeechLanguage, resultCode: Int, projectionData: Intent?) {
         // Claim the capture session right away: the consent token expires if left unused.
         val record = if (useMic) {
             createMicRecord()
@@ -134,40 +166,50 @@ class CaptionService : Service() {
         }
 
         try {
-            if (record.state != AudioRecord.STATE_INITIALIZED) throw IOException("Could not open the audio source")
-
-            val overlay = CaptionOverlay(this, textSizeSp) { stopSelf() }.also { this.overlay = it }
-            overlay.show()
-
-            val modelDir = ModelManager.ensure(this, language) { percent ->
-                status(
-                    if (percent >= 0) getString(R.string.status_downloading_speech, percent)
-                    else getString(R.string.status_unpacking_speech),
-                )
-            }
-            status(getString(R.string.status_loading_speech))
-            LibVosk.setLogLevel(LogLevel.WARNINGS)
-            val model = withContext(Dispatchers.IO) { Model(modelDir.absolutePath) }
-
-            try {
-                if (targetTag != null) {
-                    translator = when (targetTag) {
-                        KhmerTargets.GEMINI -> GeminiTranslator(this, cloudApiKey, language.label, "Khmer")
-                        KhmerTargets.OFFLINE -> OfflineKhmerTranslator(this, language.translateTag)
-                        else -> MlKitTranslator(this, language.translateTag, targetTag)
-                    }.also { it.prepare(::status) }
-                    scope.launch { translateFinals() }
-                    scope.launch { translatePartials() }
-                }
-
-                CaptionState.status.value = CaptionStatus.Running
-                overlay.setStatus(getString(R.string.listening))
-                recognize(record, model)
-            } finally {
-                model.close()
-            }
+            if (record.state != AudioRecord.STATE_INITIALIZED) throw IOException(getString(R.string.audio_open_failed))
+            overlay = CaptionOverlay(this, prefs.textSizeSp, onClose = { stopSelf() }, onVoiceToggle = ::toggleVoice)
+                .also { it.show() }
+            startVoice()
+            if (engine == TranslationEngine.LIVE) runLive(record) else runText(record, language)
         } finally {
             record.release()
+        }
+    }
+
+    // region Offline / Gemini text engines
+
+    private suspend fun runText(record: AudioRecord, language: SpeechLanguage) {
+        val modelDir = ModelManager.ensure(this, language) { percent ->
+            status(
+                if (percent >= 0) getString(R.string.status_downloading_speech, percent)
+                else getString(R.string.status_unpacking_speech),
+            )
+        }
+        status(getString(R.string.status_loading_speech))
+        LibVosk.setLogLevel(LogLevel.WARNINGS)
+        val model = withContext(Dispatchers.IO) { Model(modelDir.absolutePath) }
+
+        try {
+            val t = target
+            if (t != null) {
+                if (!t.supports(engine)) throw IllegalStateException(getString(R.string.engine_unsupported_language))
+                val textTranslator = when {
+                    engine == TranslationEngine.GEMINI -> GeminiTranslator(
+                        prefs.geminiApiKey, language.label, t,
+                        connectingMessage = getString(R.string.status_connecting_translation),
+                    )
+                    t.tag == TargetLanguage.KHMER -> OfflineKhmerTranslator(this, language.translateTag)
+                    else -> MlKitTranslator(this, language.translateTag, t.mlKit!!)
+                }
+                translator = textTranslator
+                textTranslator.prepare(::status)
+                pipeline = TranslationPipeline(scope, textTranslator, clock, pipelineListener)
+                if (voiceOn) ensureTts()
+            }
+            running()
+            recognize(record, model)
+        } finally {
+            model.close()
         }
     }
 
@@ -177,20 +219,21 @@ class CaptionService : Service() {
         try {
             record.startRecording()
             val buffer = ShortArray(SAMPLE_RATE / 5) // 200 ms
+            val silence = ShortArray(buffer.size)
             var lastPartial = ""
             while (isActive) {
                 val n = record.read(buffer, 0, buffer.size)
                 if (n < 0) throw IOException("Audio capture stopped (error $n)")
                 if (n == 0) continue
-                if (recognizer.acceptWaveForm(buffer, n)) {
+                if (recognizer.acceptWaveForm(if (muteInput) silence else buffer, n)) {
                     lastPartial = ""
                     val text = parseVoskResult(recognizer.result, "text")
-                    if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text.capitalizeFirst()) }
+                    if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text) }
                 } else {
                     val partial = parseVoskResult(recognizer.partialResult, "partial")
                     if (partial.isNotEmpty() && partial != lastPartial) {
                         lastPartial = partial
-                        withContext(Dispatchers.Main) { onPartial(partial.capitalizeFirst()) }
+                        withContext(Dispatchers.Main) { onPartial(partial) }
                     }
                 }
             }
@@ -200,74 +243,241 @@ class CaptionService : Service() {
         }
     }
 
-    private fun onPartial(text: String) {
+    private fun onPartial(raw: String) {
+        val text = TextTidy.transcript(raw, sourceTag).capitalizeFirst()
         original.setLive(text)
-        pendingPartial.value = utterance to text
+        pipeline?.submitPartial(text)
         render()
     }
 
-    private fun onFinal(text: String) {
-        original.commit(text)
-        utterance++
-        pendingFinals.trySend(text)
+    private fun onFinal(raw: String) {
+        val sentence = TextTidy.sentence(raw, sourceTag)
+        original.commit(sentence)
+        pipeline?.submitFinal(sentence)
         render()
     }
 
-    private suspend fun translateFinals() {
-        for (first in pendingFinals) {
-            // If translation is slower than speech, skip ahead to the newest sentence.
-            var text = first
-            while (true) text = pendingFinals.tryReceive().getOrNull() ?: break
-            val result = translate(text) ?: continue
-            translated.commit(result)
+    private val pipelineListener = object : TranslationPipeline.Listener {
+        override fun onPartialTranslation(text: String) {
+            translated.setLive(text)
             render()
         }
-    }
 
-    /** Translates the sentence in progress; always works on the newest partial. */
-    private suspend fun translatePartials() {
-        val interval = translator?.partialIntervalMs ?: return
-        pendingPartial.collect { (id, text) ->
-            if (text.isEmpty() || id != utterance) return@collect
-            val result = translate(text) ?: return@collect
-            if (id == utterance) {
-                translated.setLive(result)
-                render()
+        override fun onFinalTranslation(line: TranslatedLine) {
+            translated.commit(line.translation)
+            render()
+            if (voiceAllowed()) tts?.speak(line.translation)
+        }
+
+        override fun onRateLimited(retryAfterMs: Long) {
+            Log.i(TAG, "Rate limited for $retryAfterMs ms")
+            if (!warnedRateLimit) {
+                warnedRateLimit = true
+                toast(getString(R.string.rate_limited))
             }
-            delay(interval)
+        }
+
+        override fun onError(e: Exception) {
+            Log.w(TAG, "Translation failed", e)
+            if (!warnedError) {
+                warnedError = true
+                toast(getString(R.string.translation_failed, e.message ?: e.javaClass.simpleName))
+            }
         }
     }
 
-    private suspend fun translate(text: String): String? =
+    // endregion
+
+    // region Gemini Live engine
+
+    private suspend fun runLive(record: AudioRecord) {
+        val code = target?.live ?: throw IllegalStateException(getString(R.string.live_needs_target))
+        status(getString(R.string.status_connecting_live))
+        val client = OkHttpClient.Builder()
+            .pingInterval(20, TimeUnit.SECONDS) // Notice dead connections quickly and reconnect.
+            .readTimeout(0, TimeUnit.MILLISECONDS) // Silence is normal on a live stream.
+            .build()
+            .also { http = it }
+        val url = LiveTranslator.url(prefs.geminiApiKey)
+        val translator = LiveTranslator(scope, { listener -> LiveTranslateSession(client, url, code, listener) }, liveEvents)
+        live = translator
+        translator.start()
+        streamAudio(record, translator)
+    }
+
+    /** Sends the captured audio to Gemini Live in 100 ms chunks until the service is cancelled. */
+    private suspend fun streamAudio(record: AudioRecord, translator: LiveTranslator) = withContext(Dispatchers.Default) {
         try {
-            translator?.translate(text)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Translation failed", e)
-            null
+            record.startRecording()
+            val samples = ShortArray(SAMPLE_RATE / 10)
+            while (isActive) {
+                val n = record.read(samples, 0, samples.size)
+                if (n < 0) throw IOException("Audio capture stopped (error $n)")
+                if (n == 0) continue
+                val bytes = ByteArray(n * 2)
+                if (!muteInput) ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(samples, 0, n)
+                translator.sendAudio(bytes)
+            }
+        } finally {
+            runCatching { record.stop() }
         }
+    }
+
+    private val liveEvents = object : LiveTranslator.Events {
+        override fun onConnected() {
+            if (CaptionState.status.value != CaptionStatus.Running) running()
+        }
+
+        override fun onReconnecting() {
+            overlay?.setStatus(getString(R.string.status_reconnecting_live))
+        }
+
+        override fun onInputTranscript(text: String, interim: Boolean) {
+            if (interim) liveOriginal.setInterim(text) else liveOriginal.append(text)
+            render()
+        }
+
+        override fun onOutputTranscript(text: String) {
+            liveTranslated.append(text)
+            render()
+        }
+
+        override fun onAudio(pcm: ByteArray, sampleRate: Int) {
+            if (!voiceAllowed()) return
+            val current = player
+            val p = if (current != null && current.sampleRate == sampleRate) current else {
+                current?.release()
+                PcmPlayer(sampleRate, ::onSpeakingChanged).also { player = it }
+            }
+            p.enqueue(pcm)
+        }
+
+        override fun onTurnComplete() {
+            liveOriginal.endSegment()
+            liveTranslated.endSegment()
+        }
+
+        override fun onInterrupted() {
+            player?.flush()
+        }
+
+        override fun onFatal(message: String) = fail(IOException(message))
+    }
+
+    // endregion
+
+    // region Spoken translation
+
+    private fun startVoice() {
+        if (target == null) {
+            overlay?.setVoiceButton(VoiceButton.HIDDEN)
+            return
+        }
+        focus = VoiceFocus(this, prefs.duckOthers) { stopSpeaking() }
+        val monitor = HeadphoneMonitor(this).also { headphones = it }
+        monitor.start()
+        scope.launch {
+            monitor.connected.collect {
+                if (!voiceAllowed()) stopSpeaking()
+                updateInputMute()
+                updateVoiceButton()
+            }
+        }
+    }
+
+    private val headphonesConnected get() = headphones?.connected?.value == true
+
+    private fun voiceAllowed() = voiceOn && target != null && (headphonesConnected || prefs.allowSpeaker)
+
+    private fun toggleVoice() {
+        voiceOn = !voiceOn
+        prefs.voiceEnabled = voiceOn
+        if (!voiceOn) {
+            stopSpeaking()
+        } else {
+            if (engine != TranslationEngine.LIVE && pipeline != null) ensureTts()
+            if (!headphonesConnected && !prefs.allowSpeaker) toast(getString(R.string.voice_connect_headphones))
+        }
+        updateVoiceButton()
+    }
+
+    private fun updateVoiceButton() {
+        overlay?.setVoiceButton(
+            when {
+                target == null -> VoiceButton.HIDDEN
+                !voiceOn -> VoiceButton.OFF
+                !headphonesConnected && !prefs.allowSpeaker -> VoiceButton.WAITING_FOR_HEADPHONES
+                else -> VoiceButton.ON
+            },
+        )
+    }
+
+    /** Finds a text-to-speech voice for the target language (Offline / Gemini engines). */
+    private fun ensureTts() {
+        val t = target ?: return
+        if (tts != null || ttsLookup?.isActive == true) return
+        ttsLookup = scope.launch {
+            when (val result = TtsVoice.find(this@CaptionService, t.voiceLocale)) {
+                is VoiceLookup.Ready -> tts = TtsVoice(result.tts, prefs.voiceRate, ::onSpeakingChanged)
+                is VoiceLookup.NeedsDownload -> toast(getString(R.string.voice_needs_download, t.displayName()))
+                VoiceLookup.Unsupported -> toast(getString(R.string.voice_unsupported, t.displayName()))
+            }
+        }
+    }
+
+    private fun stopSpeaking() {
+        tts?.stop()
+        player?.flush()
+    }
+
+    private fun onSpeakingChanged(speaking: Boolean) {
+        voiceSpeaking = speaking
+        focus?.setSpeaking(speaking)
+        updateInputMute()
+    }
+
+    private fun updateInputMute() {
+        muteInput = useMic && voiceSpeaking && !headphonesConnected
+    }
+
+    // endregion
 
     private fun render() {
         val overlay = overlay ?: return
-        if (translator == null) {
-            overlay.setCaption(original.render(), "")
-        } else {
-            overlay.setCaption(translated.render(), if (showOriginal) original.render() else "")
+        when {
+            engine == TranslationEngine.LIVE -> {
+                val translation = liveTranslated.render()
+                val source = liveOriginal.render()
+                if (translation.isEmpty()) overlay.setCaption(source, "")
+                else overlay.setCaption(translation, if (showOriginal) source else "")
+            }
+            translator == null -> overlay.setCaption(original.render(), "")
+            else -> overlay.setCaption(translated.render(), if (showOriginal) original.render() else "")
         }
+    }
+
+    private fun running() {
+        CaptionState.status.value = CaptionStatus.Running
+        overlay?.setStatus(getString(R.string.listening))
+        updateVoiceButton()
     }
 
     @SuppressLint("MissingPermission") // RECORD_AUDIO is granted before the service is started.
     private fun createPlaybackRecord(projection: MediaProjection): AudioRecord {
-        val config = AudioPlaybackCaptureConfiguration.Builder(projection)
+        val builder = AudioPlaybackCaptureConfiguration.Builder(projection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .build()
+        // Our own spoken translation must never be captioned again. Text-to-speech engines play
+        // in their own app, so exclude those too when the phone's voice may be used.
+        builder.excludeUid(Process.myUid())
+        if (engine != TranslationEngine.LIVE && target != null) {
+            VoiceAudio.ttsEngineUids(this).filter { it != Process.myUid() }.forEach { builder.excludeUid(it) }
+        }
         return AudioRecord.Builder()
             .setAudioFormat(audioFormat())
             .setBufferSizeInBytes(bufferBytes())
-            .setAudioPlaybackCaptureConfig(config)
+            .setAudioPlaybackCaptureConfig(builder.build())
             .build()
     }
 
@@ -295,6 +505,8 @@ class CaptionService : Service() {
         overlay?.setStatus(message)
     }
 
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
     private fun fail(e: Throwable) {
         Log.e(TAG, "Caption service failed", e)
         failed = true
@@ -302,12 +514,20 @@ class CaptionService : Service() {
         stopSelf()
     }
 
-    private var failed = false
-
     override fun onDestroy() {
         scope.cancel()
+        live?.stop()
+        pipeline?.close()
         overlay?.hide()
         translator?.close()
+        tts?.close()
+        player?.release()
+        focus?.abandon()
+        headphones?.stop()
+        http?.let {
+            it.dispatcher.executorService.shutdown()
+            it.connectionPool.evictAll()
+        }
         projection?.let {
             it.unregisterCallback(projectionCallback)
             it.stop()

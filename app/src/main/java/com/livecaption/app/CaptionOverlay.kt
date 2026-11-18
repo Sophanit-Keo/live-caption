@@ -13,15 +13,32 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
+
+/** State of the overlay's voice button. */
+enum class VoiceButton {
+    /** No voice for this session (captions only). */
+    HIDDEN,
+
+    /** Translations are spoken. */
+    ON,
+
+    /** Voice is on but waits for headphones. */
+    WAITING_FOR_HEADPHONES,
+
+    /** Muted by the user. */
+    OFF,
+}
 
 /** The floating subtitle box drawn on top of every app. Drag it to move it. */
 class CaptionOverlay(
     private val context: Context,
     textSizeSp: Float,
     private val onClose: () -> Unit,
+    private val onVoiceToggle: () -> Unit,
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -38,27 +55,34 @@ class CaptionOverlay(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizeSp)
         maxLines = 3
     }
-    private val closeButton = TextView(context).apply {
-        text = "✕"
-        setTextColor(Color.argb(200, 255, 255, 255))
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        gravity = Gravity.CENTER
-        contentDescription = context.getString(R.string.close)
-        setOnClickListener { onClose() }
-    }
+    private val closeButton = iconButton(R.drawable.ic_close, context.getString(R.string.close)) { onClose() }
+    private val voiceButton = iconButton(R.drawable.ic_voice_on, context.getString(R.string.voice_toggle)) {
+        onVoiceToggle()
+    }.apply { visibility = View.GONE }
+
     private val root = FrameLayout(context).apply {
         setBackgroundResource(R.drawable.overlay_background)
-        val pad = dp(14)
         addView(
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(pad, dp(10), dp(48), dp(12))
+                setPadding(dp(14), dp(10), dp(48), dp(12))
                 addView(secondary)
                 addView(primary)
             },
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
         )
-        addView(closeButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END))
+        addView(
+            LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(closeButton, LinearLayout.LayoutParams(dp(44), dp(40)))
+                addView(voiceButton, LinearLayout.LayoutParams(dp(44), dp(40)))
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ),
+        )
     }
 
     private val params = WindowManager.LayoutParams(
@@ -107,11 +131,40 @@ class CaptionOverlay(
         handler.postDelayed(fadeOut, IDLE_CLEAR_MS)
     }
 
+    fun setVoiceButton(state: VoiceButton) {
+        voiceButton.visibility = if (state == VoiceButton.HIDDEN) View.GONE else View.VISIBLE
+        voiceButton.setImageResource(
+            when (state) {
+                VoiceButton.OFF -> R.drawable.ic_voice_off
+                VoiceButton.WAITING_FOR_HEADPHONES -> R.drawable.ic_headphones
+                else -> R.drawable.ic_voice_on
+            },
+        )
+        voiceButton.alpha = if (state == VoiceButton.WAITING_FOR_HEADPHONES) 0.5f else 0.85f
+        voiceButton.contentDescription = context.getString(
+            when (state) {
+                VoiceButton.OFF -> R.string.voice_turn_on
+                VoiceButton.WAITING_FOR_HEADPHONES -> R.string.voice_waiting_headphones
+                else -> R.string.voice_turn_off
+            },
+        )
+    }
+
     private fun setTexts(primaryText: String, secondaryText: String) {
         primary.text = primaryText
         secondary.text = secondaryText
         secondary.visibility = if (secondaryText.isEmpty()) View.GONE else View.VISIBLE
         root.alpha = if (primaryText.isEmpty() && secondaryText.isEmpty()) 0.35f else 1f
+    }
+
+    private fun iconButton(icon: Int, description: String, onClick: () -> Unit) = ImageView(context).apply {
+        setImageResource(icon)
+        alpha = 0.85f
+        scaleType = ImageView.ScaleType.CENTER
+        contentDescription = description
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
     }
 
     @SuppressLint("ClickableViewAccessibility")

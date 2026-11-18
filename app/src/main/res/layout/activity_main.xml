@@ -25,31 +25,54 @@
             android:text="@string/tagline"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:labelFor="@+id/sourceLanguage"
-            android:text="@string/spoken_language"
-            android:textAppearance="?attr/textAppearanceLabelLarge" />
-
-        <Spinner
-            android:id="@+id/sourceLanguage"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginBottom="16dp" />
+        <!-- Translation engine -->
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:labelFor="@+id/targetLanguage"
-            android:text="@string/translate_to"
+            android:text="@string/engine"
             android:textAppearance="?attr/textAppearanceLabelLarge" />
 
-        <Spinner
-            android:id="@+id/targetLanguage"
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/engine"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginBottom="16dp" />
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <Button
+                android:id="@+id/engineOffline"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/engine_offline" />
+
+            <Button
+                android:id="@+id/engineGemini"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/engine_gemini" />
+
+            <Button
+                android:id="@+id/engineLive"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/engine_live" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:id="@+id/engineHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="16dp"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <LinearLayout
             android:id="@+id/onlineSettings"
@@ -84,6 +107,44 @@
                 android:textAppearance="?attr/textAppearanceBodySmall" />
         </LinearLayout>
 
+        <!-- Languages -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/sourceLanguage"
+            android:text="@string/spoken_language"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <Spinner
+            android:id="@+id/sourceLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/sourceAuto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="16dp"
+            android:text="@string/spoken_language_auto"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@+id/targetLanguage"
+            android:text="@string/translate_to"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <Spinner
+            android:id="@+id/targetLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginBottom="16dp" />
+
         <TextView
             android:id="@+id/offlineKhmerHint"
             android:layout_width="match_parent"
@@ -92,6 +153,8 @@
             android:text="@string/khmer_offline_hint"
             android:textAppearance="?attr/textAppearanceBodySmall"
             android:visibility="gone" />
+
+        <!-- Audio source -->
 
         <TextView
             android:layout_width="wrap_content"
@@ -129,8 +192,109 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="24dp"
             android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <!-- Spoken translation -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/voice_section"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/voiceEnabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/voice_enabled" />
+
+        <LinearLayout
+            android:id="@+id/voiceSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/voiceHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:textAppearance="?attr/textAppearanceBodySmall" />
+
+            <LinearLayout
+                android:id="@+id/ttsSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/voiceStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/installVoice"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:text="@string/voice_install"
+                        android:visibility="gone" />
+
+                    <Button
+                        android:id="@+id/testVoice"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/voice_test"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/voice_speed"
+                    android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/voiceRate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/voice_speed"
+                    android:stepSize="0.05"
+                    android:valueFrom="0.7"
+                    android:valueTo="1.8" />
+            </LinearLayout>
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/duckOthers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_duck" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/allowSpeaker"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_allow_speaker" />
+        </LinearLayout>
+
+        <!-- Captions -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/captions_section"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
 
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/showOriginal"

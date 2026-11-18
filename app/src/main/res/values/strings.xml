@@ -1,40 +1,85 @@
 <resources>
     <string name="app_name">Live Caption</string>
-    <string name="tagline">Subtitles and translation on top of any app</string>
+    <string name="tagline">Subtitles and spoken translation on top of any app</string>
+
+    <string name="engine">Translation engine</string>
+    <string name="engine_offline">Offline</string>
+    <string name="engine_gemini">Gemini</string>
+    <string name="engine_live">Gemini Live</string>
+    <string name="engine_hint_offline">Free and private: speech recognition and translation run on the phone. Basic translation quality.</string>
+    <string name="engine_hint_gemini">Better translations from Google Gemini that use the previous sentences as context. Speech is recognised on the phone; only the caption text is sent to Google. Needs internet.</string>
+    <string name="engine_hint_live">Real-time voice translation by Gemini Live Translate: it listens to the audio itself, detects the spoken language, and speaks the translation in a natural voice. The audio is sent to Google. Needs internet.</string>
+    <string name="api_key">Gemini API key</string>
+    <string name="api_key_hint">Create a free key at aistudio.google.com/apikey. Free keys have per-minute and per-day limits.</string>
+
     <string name="spoken_language">Spoken language</string>
+    <string name="spoken_language_auto">Detected automatically by Gemini Live (70+ languages, including Khmer).</string>
     <string name="translate_to">Translate to</string>
     <string name="no_translation">No translation (captions only)</string>
+    <string name="khmer_offline_hint">Works without internet after a one-time 910 MB download (use Wi-Fi). Slower and less accurate than Gemini: the Khmer line appears a few seconds after each sentence ends. Needs a phone with about 6 GB of RAM or more.</string>
+
     <string name="audio_source">Audio source</string>
     <string name="source_device">Device audio</string>
     <string name="source_mic">Microphone</string>
-    <string name="source_device_hint">Captions whatever is playing on the phone. Some apps (calls, certain streaming and music apps) block audio capture — use Microphone for those.</string>
-    <string name="source_mic_hint">Captions speech around you, or the phone\'s own speaker.</string>
+    <string name="source_device_hint">Translates whatever is playing on the phone. Some apps (calls, certain streaming and music apps) block audio capture — use Microphone for those.</string>
+    <string name="source_mic_hint">Translates speech around you, for example the person you are talking to. Wear headphones to hear the translation privately.</string>
+
+    <string name="voice_section">Spoken translation</string>
+    <string name="voice_enabled">Speak the translation in my headphones</string>
+    <string name="voice_hint_live">You hear Gemini\'s translated voice almost in real time. Tap the speaker button on the captions to mute it.</string>
+    <string name="voice_hint_tts">Your phone\'s text-to-speech voice reads each translated sentence. For a natural real-time voice, choose Gemini Live.</string>
+    <string name="voice_hint_no_target">Choose a language to translate into first.</string>
+    <string name="voice_checking">Looking for a %1$s voice…</string>
+    <string name="voice_ready">Voice ready (%1$s).</string>
+    <string name="voice_missing">The %1$s voice is not downloaded yet.</string>
+    <string name="voice_none">This phone has no %1$s voice. Speech Services by Google provides one for free.</string>
+    <string name="voice_install">Download voice</string>
+    <string name="voice_get_google">Get voice</string>
+    <string name="voice_test">Test voice</string>
+    <string name="voice_settings_missing">Open Settings › Accessibility › Text-to-speech to install a voice.</string>
+    <string name="voice_speed">Voice speed</string>
+    <string name="voice_duck">Lower other audio while the translation speaks</string>
+    <string name="voice_allow_speaker">Use the phone speaker when no headphones are connected</string>
+
+    <string name="captions_section">Captions</string>
     <string name="show_original">Show original text above translation</string>
     <string name="text_size">Caption text size</string>
     <string name="start">Start captions</string>
     <string name="stop">Stop captions</string>
-    <string name="status_idle">Ready. Language models download on first use, then everything except Gemini runs offline.</string>
+
+    <string name="status_idle">Ready. Models download on first use; the Offline engine then works without internet.</string>
     <string name="status_running">Captions are running. Switch to any app.</string>
     <string name="status_downloading_speech">Downloading speech model… %1$d%%</string>
     <string name="status_unpacking_speech">Unpacking speech model…</string>
     <string name="status_loading_speech">Loading speech model…</string>
     <string name="status_downloading_translation">Downloading translation model…</string>
-    <string name="status_connecting_translation">Connecting to the translation service…</string>
+    <string name="status_connecting_translation">Connecting to Gemini…</string>
     <string name="status_downloading_khmer">Downloading offline Khmer model… %1$d%%</string>
     <string name="status_loading_khmer">Loading offline Khmer model…</string>
-    <string name="khmer_gemini">Khmer (Gemini, online)</string>
-    <string name="khmer_offline">Khmer (offline)</string>
-    <string name="api_key">Gemini API key</string>
-    <string name="api_key_hint">Best Khmer quality. The caption text (not the audio) is sent to Google Gemini using your own key, and needs internet. Get a free key at aistudio.google.com/apikey. Free keys allow only a few requests per minute, so fast speech may skip sentences.</string>
-    <string name="khmer_offline_hint">Works without internet after a one-time 910 MB download (use Wi-Fi). Slower and less accurate than Gemini: the Khmer line appears a few seconds after each sentence ends. Needs a phone with about 6 GB of RAM or more.</string>
-    <string name="need_api_key">Enter your Gemini API key to translate into Khmer online.</string>
+    <string name="status_connecting_live">Connecting to Gemini Live…</string>
+    <string name="status_reconnecting_live">Reconnecting to Gemini Live…</string>
     <string name="status_error">Error: %1$s</string>
+
     <string name="need_mic_permission">Audio recording permission is required to transcribe speech.</string>
     <string name="need_overlay_permission">Allow \"Display over other apps\" so captions can float on top, then tap Start again.</string>
+    <string name="need_api_key">Enter your Gemini API key to use Gemini.</string>
+    <string name="live_needs_target">Choose a language for Gemini Live to translate into.</string>
+    <string name="engine_unsupported_language">This engine can\'t translate into the selected language. Pick another language or engine.</string>
     <string name="capture_denied">Screen/audio capture was not allowed.</string>
+    <string name="audio_open_failed">Could not open the audio source.</string>
+    <string name="rate_limited">Gemini\'s rate limit was reached. Translation pauses briefly, then catches up.</string>
+    <string name="translation_failed">Translation failed: %1$s</string>
+    <string name="voice_needs_download">Download the %1$s voice in Live Caption\'s settings to hear translations.</string>
+    <string name="voice_unsupported">This phone has no %1$s voice, so translations are shown but not spoken.</string>
+    <string name="voice_connect_headphones">Connect headphones to hear the translation.</string>
+
     <string name="notification_channel">Live captions</string>
     <string name="notification_title">Live Caption is running</string>
     <string name="notification_text">Tap to open settings</string>
     <string name="listening">Listening…</string>
     <string name="close">Close captions</string>
+    <string name="voice_toggle">Spoken translation</string>
+    <string name="voice_turn_on">Turn on spoken translation</string>
+    <string name="voice_turn_off">Turn off spoken translation</string>
+    <string name="voice_waiting_headphones">Spoken translation: connect headphones</string>
 </resources>

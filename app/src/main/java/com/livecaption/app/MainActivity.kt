@@ -87,6 +87,10 @@ class MainActivity : AppCompatActivity() {
         super.onStart()
         // The user may have just installed a voice in the text-to-speech settings.
         refreshVoice()
+        // The captions' toolbar may have changed the look meanwhile.
+        loadSubtitleSettings()
+        // Opening the app is a way out of locked captions.
+        if (CaptionState.locked.value) CaptionService.unlock(this)
     }
 
     override fun onStop() {
@@ -114,6 +118,8 @@ class MainActivity : AppCompatActivity() {
 
         apiKey.setText(prefs.geminiApiKey)
         apiKey.doAfterTextChanged { prefs.geminiApiKey = it?.toString()?.trim().orEmpty() }
+        topic.setText(prefs.topic)
+        topic.doAfterTextChanged { prefs.topic = it?.toString().orEmpty() }
 
         sourceLanguage.adapter = dropdown(SpeechLanguage.ALL)
         sourceLanguage.setSelection(SpeechLanguage.ALL.indexOf(SpeechLanguage.byModelName(prefs.sourceModel)))
@@ -123,6 +129,7 @@ class MainActivity : AppCompatActivity() {
             prefs.targetTag = targets.getOrNull(it)?.tag.orEmpty()
             updateHints()
             refreshVoice()
+            updatePreview()
         }
 
         audioSource.check(if (prefs.useMicrophone) R.id.sourceMic else R.id.sourceDevice)
@@ -144,15 +151,74 @@ class MainActivity : AppCompatActivity() {
         duckOthers.setOnCheckedChangeListener { _, checked -> prefs.duckOthers = checked }
         allowSpeaker.isChecked = prefs.allowSpeaker
         allowSpeaker.setOnCheckedChangeListener { _, checked -> prefs.allowSpeaker = checked }
+        voiceBoost.isChecked = prefs.voiceBoost
+        voiceBoost.setOnCheckedChangeListener { _, checked -> prefs.voiceBoost = checked }
         testVoice.setOnClickListener { previewVoice() }
 
-        showOriginal.isChecked = prefs.showOriginal
-        showOriginal.setOnCheckedChangeListener { _, checked -> prefs.showOriginal = checked }
-
-        textSize.value = prefs.textSizeSp.coerceIn(textSize.valueFrom, textSize.valueTo)
-        textSize.addOnChangeListener { _, value, _ -> prefs.textSizeSp = value }
+        subtitleStyle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            prefs.subtitleStyle = when (checkedId) {
+                R.id.styleOutline -> SubtitleStyle.OUTLINE
+                R.id.styleContrast -> SubtitleStyle.CONTRAST
+                else -> SubtitleStyle.BOX
+            }
+            updatePreview()
+        }
+        alignment.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            prefs.centered = checkedId == R.id.alignCenter
+            updatePreview()
+        }
+        textSize.addOnChangeListener { _, value, fromUser -> if (fromUser) setAppearance { prefs.textSizeSp = value } }
+        boxOpacity.addOnChangeListener { _, value, fromUser -> if (fromUser) setAppearance { prefs.boxOpacity = value } }
+        captionLines.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) setAppearance { prefs.captionLines = value.toInt() }
+        }
+        showOriginal.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.showOriginal = checked } }
+        syncCaptions.setOnCheckedChangeListener { _, checked -> prefs.syncCaptions = checked }
+        loadSubtitleSettings()
 
         onEngineChanged()
+    }
+
+    private inline fun setAppearance(change: () -> Unit) {
+        change()
+        updatePreview()
+    }
+
+    /** Puts the subtitle settings on screen (they may also be changed from the captions' toolbar). */
+    private fun loadSubtitleSettings() = with(binding) {
+        subtitleStyle.check(
+            when (prefs.subtitleStyle) {
+                SubtitleStyle.BOX -> R.id.styleBox
+                SubtitleStyle.OUTLINE -> R.id.styleOutline
+                SubtitleStyle.CONTRAST -> R.id.styleContrast
+            },
+        )
+        alignment.check(if (prefs.centered) R.id.alignCenter else R.id.alignLeft)
+        textSize.value = prefs.textSizeSp.coerceIn(textSize.valueFrom, textSize.valueTo)
+        boxOpacity.value = (Math.round(prefs.boxOpacity * 20) / 20f).coerceIn(boxOpacity.valueFrom, boxOpacity.valueTo)
+        captionLines.value = prefs.captionLines.toFloat().coerceIn(captionLines.valueFrom, captionLines.valueTo)
+        showOriginal.isChecked = prefs.showOriginal
+        syncCaptions.isChecked = prefs.syncCaptions
+        updatePreview()
+    }
+
+    /** Draws the sample subtitles with the current settings. */
+    private fun updatePreview() = with(binding) {
+        val appearance = prefs.appearance()
+        preview.apply(appearance)
+        // The background slider only matters for the box style.
+        val boxStyle = appearance.style == SubtitleStyle.BOX
+        boxOpacity.isEnabled = boxStyle
+        backgroundLabel.alpha = if (boxStyle) 1f else 0.5f
+        val target = selectedTarget()
+        val english = getString(R.string.preview_original)
+        if (target == null) {
+            preview.setText(CaptionText(english), CaptionText.EMPTY)
+        } else {
+            preview.setText(CaptionText(PREVIEW_SAMPLES[target.tag] ?: english), CaptionText(english))
+        }
     }
 
     private fun onEngineChanged() = with(binding) {
@@ -165,6 +231,8 @@ class MainActivity : AppCompatActivity() {
             },
         )
         onlineSettings.isVisible = current.needsApiKey
+        voiceBoost.isVisible = current == TranslationEngine.LIVE
+        syncCaptions.isVisible = current == TranslationEngine.LIVE
         // Gemini Live recognises the spoken language by itself.
         sourceLanguage.isVisible = current != TranslationEngine.LIVE
         sourceAuto.isVisible = current == TranslationEngine.LIVE
@@ -216,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         installVoice.isVisible = false
         testVoice.isVisible = false
         voiceCheck = lifecycleScope.launch {
-            when (val result = TtsVoice.find(this@MainActivity, target.voiceLocale)) {
+            when (val result = PhoneVoices.find(this@MainActivity, target.voiceLocale)) {
                 is VoiceLookup.Ready -> {
                     previewTts = result.tts
                     voiceStatus.text = getString(R.string.voice_ready, result.engineLabel)
@@ -320,9 +388,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Settings are read when captions start, so lock them while running.
         val editable = !status.isActive
+        // Looks and voice settings apply to running captions at once.
         listOf(
-            engineOffline, engineGemini, engineLive, apiKeyLayout, sourceLanguage, targetLanguage,
-            sourceDevice, sourceMic, voiceEnabled, voiceRate, duckOthers, allowSpeaker, showOriginal, textSize,
+            engineOffline, engineGemini, engineLive, apiKeyLayout, topicLayout, sourceLanguage, targetLanguage,
+            sourceDevice, sourceMic,
         ).forEach { it.isEnabled = editable }
     }
 
@@ -357,6 +426,20 @@ class MainActivity : AppCompatActivity() {
             "ko" to "안녕하세요! 번역 음성입니다.",
             "vi" to "Xin chào! Đây là giọng dịch của bạn.",
             "th" to "สวัสดี! นี่คือเสียงแปลของคุณ",
+        )
+
+        /** "Hello, how are you today?" for the subtitle preview. */
+        val PREVIEW_SAMPLES = mapOf(
+            "km" to "សួស្តី តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?",
+            "en" to "Hello, how are you today?",
+            "es" to "Hola, ¿cómo estás hoy?",
+            "fr" to "Bonjour, comment allez-vous aujourd'hui ?",
+            "de" to "Hallo, wie geht es dir heute?",
+            "zh" to "你好，你今天好吗？",
+            "ja" to "こんにちは、今日はお元気ですか？",
+            "ko" to "안녕하세요, 오늘 어떻게 지내세요?",
+            "vi" to "Xin chào, hôm nay bạn thế nào?",
+            "th" to "สวัสดี วันนี้คุณเป็นอย่างไรบ้าง",
         )
 
         /** Falls back to the language's own name, spoken in that language. */

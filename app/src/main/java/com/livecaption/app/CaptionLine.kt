@@ -4,10 +4,22 @@ import org.json.JSONObject
 import java.text.BreakIterator
 
 /**
+ * Caption text to show. Everything from [pendingStart] on is still being spoken (it may
+ * change), and is drawn dimmer.
+ */
+data class CaptionText(val text: String, val pendingStart: Int = text.length) {
+    val isEmpty: Boolean get() = text.isEmpty()
+
+    companion object {
+        val EMPTY = CaptionText("")
+    }
+}
+
+/**
  * One row of rolling subtitle text: the last finished sentence plus the
  * sentence currently being spoken, trimmed from the front to stay short.
  */
-class CaptionLine(private val maxChars: Int = 160) {
+class CaptionLine(private val maxChars: Int = DEFAULT_MAX_CHARS) {
     private var committed = ""
     private var live = ""
 
@@ -27,7 +39,12 @@ class CaptionLine(private val maxChars: Int = 160) {
         live = ""
     }
 
-    fun render(): String = displayTail(listOf(committed, live).filter { it.isNotEmpty() }.joinToString(" "), maxChars)
+    fun render(): String = renderParts().text
+
+    fun renderParts(): CaptionText {
+        val tail = displayTail(listOf(committed, live).filter { it.isNotEmpty() }.joinToString(" "), maxChars)
+        return CaptionText(tail, if (live.isEmpty()) tail.length else (tail.length - live.length).coerceAtLeast(0))
+    }
 }
 
 /**
@@ -35,7 +52,7 @@ class CaptionLine(private val maxChars: Int = 160) {
  * after a long silence the next fragment starts a fresh line instead of reviving old text.
  */
 class RollingText(
-    private val maxChars: Int = 160,
+    private val maxChars: Int = DEFAULT_MAX_CHARS,
     private val resetAfterMs: Long = 8_000,
     private val clock: () -> Long,
 ) {
@@ -69,12 +86,18 @@ class RollingText(
         newSegment = true
     }
 
-    fun render(): String {
-        val joined = if (interim.isEmpty()) text.toString() else {
-            val sep = if (text.isNotEmpty() && !text.last().isWhitespace() && !interim.first().isWhitespace()) " " else ""
-            text.toString() + sep + interim
+    fun render(): String = renderParts().text
+
+    fun renderParts(): CaptionText {
+        val final = text.toString().trim()
+        val pending = interim.trim()
+        val full = when {
+            pending.isEmpty() -> final
+            final.isEmpty() -> pending
+            else -> "$final $pending"
         }
-        return displayTail(joined.trim(), maxChars)
+        val tail = displayTail(full, maxChars)
+        return CaptionText(tail, if (pending.isEmpty()) tail.length else (tail.length - pending.length).coerceAtLeast(0))
     }
 
     private fun touch() {
@@ -102,6 +125,9 @@ fun displayTail(full: String, maxChars: Int): String {
 }
 
 private const val MAX_WORD_SEARCH = 24
+
+/** Enough for several lines of small text; the view shows the newest lines. */
+const val DEFAULT_MAX_CHARS = 280
 
 /** Pulls [key] ("text" or "partial") out of a Vosk JSON result. */
 fun parseVoskResult(json: String, key: String): String =

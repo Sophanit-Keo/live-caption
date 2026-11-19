@@ -9,6 +9,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.audiofx.LoudnessEnhancer
 import android.media.PlaybackParams
 import android.os.Bundle
 import android.os.Handler
@@ -52,7 +53,7 @@ object VoiceAudio {
 }
 
 /** Lowers other apps' audio (ducking) while a translation is being spoken. */
-class VoiceFocus(context: Context, private val duckOthers: Boolean, private val onLost: () -> Unit) {
+class VoiceFocus(context: Context, var duckOthers: Boolean, private val onLost: () -> Unit) {
     private val audio = context.getSystemService(AudioManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private var request: AudioFocusRequest? = null
@@ -137,15 +138,22 @@ sealed interface VoiceLookup {
     data object Unsupported : VoiceLookup
 }
 
-/** Speaks translated sentences with the phone's text-to-speech engine. */
+/**
+ * Speaks translated sentences with the phone's text-to-speech engine. The next sentence is
+ * handed to the engine while the current one is still playing, so there is no gap between
+ * them; anything beyond that waits in a [SpeechQueue] that keeps only the newest sentences.
+ */
 class TtsVoice(
     private val tts: TextToSpeech,
-    private val baseRate: Float,
+    rate: Float,
     private val onSpeaking: (Boolean) -> Unit,
 ) {
+    /** Normal speech rate chosen by the user (1 = normal); can change while speaking. */
+    var baseRate: Float = rate
+
     private val queue = SpeechQueue()
     private val main = Handler(Looper.getMainLooper())
-    private var speaking = false
+    private val inEngine = LinkedHashSet<String>()
     private var nextId = 0
 
     init {
@@ -153,16 +161,16 @@ class TtsVoice(
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
             override fun onDone(utteranceId: String?) {
-                main.post(::speakNext)
+                main.post { finished(utteranceId) }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                main.post(::speakNext)
+                main.post { finished(utteranceId) }
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                main.post(::speakNext)
+                main.post { finished(utteranceId) }
             }
         })
     }
@@ -170,25 +178,30 @@ class TtsVoice(
     /** Main thread only. */
     fun speak(text: String) {
         queue.add(text)
-        if (!speaking) speakNext()
+        pump()
     }
 
-    private fun speakNext() {
-        val text = queue.next()
-        if (text == null) {
-            setSpeaking(false)
-            return
+    private fun finished(id: String?) {
+        if (id != null && inEngine.remove(id)) pump()
+    }
+
+    private fun pump() {
+        while (inEngine.size < IN_ENGINE) {
+            val text = queue.next() ?: break
+            val id = "caption-${nextId++}"
+            // Faster while sentences are waiting, so the voice doesn't fall behind the video.
+            tts.setSpeechRate(baseRate * queue.rateFactor(alsoQueued = inEngine.size))
+            if (tts.speak(text, TextToSpeech.QUEUE_ADD, Bundle(), id) == TextToSpeech.SUCCESS) inEngine += id
         }
-        setSpeaking(true)
-        tts.setSpeechRate(baseRate * queue.rateFactor())
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), "caption-${nextId++}")
+        onSpeaking(inEngine.isNotEmpty())
     }
 
     /** Stops talking and forgets queued sentences. */
     fun stop() {
         queue.clear()
+        inEngine.clear()
         tts.stop()
-        setSpeaking(false)
+        onSpeaking(false)
     }
 
     fun close() {
@@ -196,71 +209,103 @@ class TtsVoice(
         tts.shutdown()
     }
 
-    private fun setSpeaking(value: Boolean) {
-        if (speaking == value) return
-        speaking = value
-        onSpeaking(value)
+    private companion object {
+        /** Sentences handed to the engine at once: the one playing and the next one. */
+        const val IN_ENGINE = 2
     }
+}
 
-    companion object {
-        /** Finds an engine that speaks [locale]: the default engine first, then any other installed one. */
-        suspend fun find(context: Context, locale: Locale): VoiceLookup {
-            val first = open(context, null) ?: return VoiceLookup.Unsupported
-            val engines = first.engines.orEmpty()
-            val default = first.defaultEngine.orEmpty()
-            fun label(pkg: String) = engines.firstOrNull { it.name == pkg }?.label ?: pkg
-            var needsDownload: VoiceLookup.NeedsDownload? = null
+/** Looking up a phone voice. */
+object PhoneVoices {
+    /** Finds an engine that speaks [locale]: the default engine first, then any other installed one. */
+    suspend fun find(context: Context, locale: Locale): VoiceLookup {
+        val first = open(context, null) ?: return VoiceLookup.Unsupported
+        val engines = first.engines.orEmpty()
+        val default = first.defaultEngine.orEmpty()
+        fun label(pkg: String) = engines.firstOrNull { it.name == pkg }?.label ?: pkg
+        var needsDownload: VoiceLookup.NeedsDownload? = null
 
-            fun check(tts: TextToSpeech, pkg: String): VoiceLookup? = when (tts.setLanguage(locale)) {
-                TextToSpeech.LANG_MISSING_DATA -> {
-                    if (needsDownload == null) needsDownload = VoiceLookup.NeedsDownload(pkg, label(pkg))
-                    null
-                }
-                TextToSpeech.LANG_NOT_SUPPORTED -> null
-                else -> VoiceLookup.Ready(tts, pkg, label(pkg))
+        fun check(tts: TextToSpeech, pkg: String): VoiceLookup? = when (tts.setLanguage(locale)) {
+            TextToSpeech.LANG_MISSING_DATA -> {
+                if (needsDownload == null) needsDownload = VoiceLookup.NeedsDownload(pkg, label(pkg))
+                null
             }
-
-            check(first, default)?.let { return it }
-            first.shutdown()
-            for (engine in engines.map { it.name }.filter { it != default }) {
-                val tts = open(context, engine) ?: continue
-                check(tts, engine)?.let { return it }
-                tts.shutdown()
+            TextToSpeech.LANG_NOT_SUPPORTED -> null
+            else -> {
+                pickBestVoice(tts, locale)
+                VoiceLookup.Ready(tts, pkg, label(pkg))
             }
-            return needsDownload ?: VoiceLookup.Unsupported
         }
 
-        private suspend fun open(context: Context, engine: String?): TextToSpeech? =
-            suspendCancellableCoroutine { cont ->
-                var created: TextToSpeech? = null
-                var status: Int? = null
-                val listener = TextToSpeech.OnInitListener { result ->
-                    status = result
-                    val tts = created ?: return@OnInitListener // Reported during construction: handled below.
-                    if (result == TextToSpeech.SUCCESS) cont.resume(tts) else {
-                        tts.shutdown()
-                        cont.resume(null)
-                    }
-                }
-                val tts = TextToSpeech(context.applicationContext, listener, engine)
-                created = tts
-                status?.let { result ->
-                    if (result == TextToSpeech.SUCCESS) cont.resume(tts) else {
-                        tts.shutdown()
-                        cont.resume(null)
-                    }
-                }
-                cont.invokeOnCancellation { tts.shutdown() }
-            }
+        check(first, default)?.let { return it }
+        first.shutdown()
+        for (engine in engines.map { it.name }.filter { it != default }) {
+            val tts = open(context, engine) ?: continue
+            check(tts, engine)?.let { return it }
+            tts.shutdown()
+        }
+        return needsDownload ?: VoiceLookup.Unsupported
     }
+
+    /**
+     * Prefers a voice that is installed on the phone (no network delay before each
+     * sentence) and of the highest quality, in the requested country when possible.
+     */
+    private fun pickBestVoice(tts: TextToSpeech, locale: Locale) {
+        val voices = try {
+            tts.voices.orEmpty()
+        } catch (e: Exception) {
+            return
+        }
+        val best = voices
+            .filter { it.locale.language == locale.language }
+            .filterNot { TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in it.features.orEmpty() }
+            .sortedWith(
+                compareBy<android.speech.tts.Voice> { it.isNetworkConnectionRequired }
+                    .thenByDescending { it.quality }
+                    .thenByDescending { locale.country.isNotEmpty() && it.locale.country == locale.country },
+            )
+            .firstOrNull() ?: return
+        try {
+            tts.voice = best
+        } catch (e: Exception) {
+            Log.w("TtsVoice", "Could not select voice ${best.name}", e)
+        }
+    }
+
+    private suspend fun open(context: Context, engine: String?): TextToSpeech? =
+        suspendCancellableCoroutine { cont ->
+            var created: TextToSpeech? = null
+            var status: Int? = null
+            val listener = TextToSpeech.OnInitListener { result ->
+                status = result
+                val tts = created ?: return@OnInitListener // Reported during construction: handled below.
+                if (result == TextToSpeech.SUCCESS) cont.resume(tts) else {
+                    tts.shutdown()
+                    cont.resume(null)
+                }
+            }
+            val tts = TextToSpeech(context.applicationContext, listener, engine)
+            created = tts
+            status?.let { result ->
+                if (result == TextToSpeech.SUCCESS) cont.resume(tts) else {
+                    tts.shutdown()
+                    cont.resume(null)
+                }
+            }
+            cont.invokeOnCancellation { tts.shutdown() }
+        }
 }
 
 /**
  * Plays the stream of translated speech from Gemini Live (16-bit mono PCM) as it arrives.
- * When the speaker talks faster than the translation can be played, playback speeds up a
- * little, and a very long backlog is skipped so the voice stays close to the video.
+ *
+ * - Each phrase starts after a short buffer, so network hiccups don't make the voice stutter.
+ * - When translated speech piles up behind the video, playback speeds up in small steps
+ *   ([PlaybackPacing]); far behind, the oldest speech is skipped.
+ * - Optionally boosts loudness so the translation stands out over the original audio.
  */
-class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) {
+class PcmPlayer(val sampleRate: Int, boost: Boolean, private val onSpeaking: (Boolean) -> Unit) {
     private val track = AudioTrack.Builder()
         .setAudioAttributes(VoiceAudio.attributes)
         .setAudioFormat(
@@ -271,13 +316,24 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
                 .build(),
         )
         .setTransferMode(AudioTrack.MODE_STREAM)
+        // A small device buffer: speed changes and skips take effect quickly.
         .setBufferSizeInBytes(
             maxOf(
-                AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT),
-                sampleRate, // half a second
+                AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2,
+                bytesFor(DEVICE_BUFFER_MS),
             ),
         )
         .build()
+
+    private val enhancer: LoudnessEnhancer? = try {
+        LoudnessEnhancer(track.audioSessionId).apply {
+            setTargetGain(BOOST_MILLIBELS)
+            enabled = boost
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Loudness boost not available", e)
+        null
+    }
 
     private val queue = LinkedBlockingDeque<ByteArray>()
     private val queuedBytes = AtomicLong()
@@ -285,9 +341,12 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
 
     @Volatile private var running = true
     @Volatile private var flushRequested = false
-    private var framesWritten = 0L
+    @Volatile private var framesWritten = 0L
     private var speaking = false
-    private var speed = 1f
+    @Volatile private var speedStep = 0
+
+    /** Current playback speed (1 = normal). */
+    val speed: Float get() = PlaybackPacing.SPEEDS[speedStep]
 
     private val writer = thread(name = "translation-voice") {
         track.play()
@@ -295,6 +354,7 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
             if (flushRequested) doFlush()
             val chunk = queue.poll(100, TimeUnit.MILLISECONDS)
             if (chunk != null) {
+                if (!speaking) waitForStartBuffer(chunk.size)
                 queuedBytes.addAndGet(-chunk.size.toLong())
                 setSpeaking(true)
                 var offset = 0
@@ -304,7 +364,7 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
                     offset += n
                 }
                 framesWritten += offset / 2
-                adjustSpeed()
+                pace()
             } else if (speaking && unplayedFrames() == 0L) {
                 setSpeaking(false)
             }
@@ -325,35 +385,51 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
         flushRequested = true
     }
 
+    fun setBoost(on: Boolean) {
+        try {
+            enhancer?.enabled = on
+        } catch (e: Exception) {
+            Log.w(TAG, "Loudness boost failed", e)
+        }
+    }
+
     fun release() {
         running = false
         writer.join(1_000)
+        enhancer?.release()
         track.release()
     }
 
-    /** Milliseconds of translated speech waiting to be heard. */
-    private fun backlogMs(): Long = (queuedBytes.get().coerceAtLeast(0) / 2 + unplayedFrames()) * 1000 / sampleRate
+    /** Milliseconds of translated speech waiting to be heard (any thread). */
+    fun backlogMs(): Long = (queuedBytes.get().coerceAtLeast(0) / 2 + unplayedFrames()) * 1000 / sampleRate
 
     private fun unplayedFrames(): Long {
         val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
         return (framesWritten - head).coerceAtLeast(0)
     }
 
-    private fun adjustSpeed() {
-        val backlog = backlogMs()
-        if (backlog > SKIP_BACKLOG_MS) {
-            // Hopelessly behind: skip to the newest speech.
-            while (queue.size > 1) queuedBytes.addAndGet(-(queue.pollFirst()?.size ?: 0).toLong())
+    /** At the start of a phrase, wait briefly for a little more audio to arrive. */
+    private fun waitForStartBuffer(firstChunkBytes: Int) {
+        val deadline = System.nanoTime() + START_WAIT_MS * 1_000_000
+        while (running && !flushRequested && queuedBytes.get() < bytesFor(START_BUFFER_MS).toLong() - firstChunkBytes &&
+            System.nanoTime() < deadline
+        ) {
+            Thread.sleep(10)
         }
-        val wanted = when {
-            backlog > FAST_BACKLOG_MS -> FAST_SPEED
-            backlog < NORMAL_BACKLOG_MS -> 1f
-            else -> speed
+    }
+
+    private fun pace() {
+        if (backlogMs() > PlaybackPacing.SKIP_ABOVE_MS) {
+            // Hopelessly behind the video: skip the oldest speech.
+            while (queue.size > 1 && backlogMs() > PlaybackPacing.CATCH_UP_TO_MS) {
+                queuedBytes.addAndGet(-(queue.pollFirst()?.size ?: 0).toLong())
+            }
         }
-        if (wanted != speed) {
+        val step = PlaybackPacing.step(backlogMs(), speedStep)
+        if (step != speedStep) {
             try {
-                track.playbackParams = PlaybackParams().setSpeed(wanted).setPitch(1f)
-                speed = wanted
+                track.playbackParams = PlaybackParams().setSpeed(PlaybackPacing.SPEEDS[step]).setPitch(1f)
+                speedStep = step
             } catch (e: Exception) {
                 Log.w(TAG, "Playback speed not supported", e)
             }
@@ -375,11 +451,13 @@ class PcmPlayer(val sampleRate: Int, private val onSpeaking: (Boolean) -> Unit) 
         main.post { onSpeaking(value) }
     }
 
+    private fun bytesFor(ms: Int) = sampleRate * 2 * ms / 1000
+
     private companion object {
         const val TAG = "PcmPlayer"
-        const val NORMAL_BACKLOG_MS = 1_500L
-        const val FAST_BACKLOG_MS = 5_000L
-        const val SKIP_BACKLOG_MS = 15_000L
-        const val FAST_SPEED = 1.25f
+        const val DEVICE_BUFFER_MS = 200
+        const val START_BUFFER_MS = 240
+        const val START_WAIT_MS = 300L
+        const val BOOST_MILLIBELS = 600 // +6 dB
     }
 }

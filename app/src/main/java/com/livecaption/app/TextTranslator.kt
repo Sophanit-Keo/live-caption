@@ -121,6 +121,8 @@ class GeminiTranslator(
     private val target: TargetLanguage,
     private val baseUrl: String = BASE_URL,
     private val connectingMessage: String = "",
+    /** Optional description of what is being watched, to help with terms and names. */
+    private val topic: String = "",
 ) : TextTranslator {
 
     /** A model to try, with the thinking level that keeps it fast (null = model default). */
@@ -209,6 +211,7 @@ class GeminiTranslator(
             append("natural, fluent, everyday $targetName with correct punctuation, and no quotes, notes or alternatives. ")
             append("Keep names, numbers and brands accurate. ")
             append("If the caption is an unfinished sentence, translate it as an unfinished sentence.")
+            if (topic.isNotBlank()) append(" The speech comes from: ${topic.trim()}.")
             if (target.tag == TargetLanguage.KHMER) {
                 append(" Write in Khmer script. Do not put spaces between Khmer words; use spaces only ")
                 append("where Khmer writing normally separates phrases.")

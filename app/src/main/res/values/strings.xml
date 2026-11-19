@@ -40,8 +40,24 @@
     <string name="voice_speed">Voice speed</string>
     <string name="voice_duck">Lower other audio while the translation speaks</string>
     <string name="voice_allow_speaker">Use the phone speaker when no headphones are connected</string>
+    <string name="voice_boost">Louder Gemini Live voice</string>
+    <string name="topic">What are you watching? (optional)</string>
+    <string name="topic_hint">For example: football match, cooking show, physics lecture. Helps Gemini get names and terms right.</string>
 
-    <string name="captions_section">Captions</string>
+    <string name="captions_section">Subtitles</string>
+    <string name="captions_live_hint">Changes apply to running captions right away. While captions run, tap them for quick controls.</string>
+    <string name="caption_style">Style</string>
+    <string name="style_box">Box</string>
+    <string name="style_outline">Outline</string>
+    <string name="style_contrast">High contrast</string>
+    <string name="caption_background">Background</string>
+    <string name="caption_lines">Lines of text</string>
+    <string name="caption_alignment">Alignment</string>
+    <string name="align_center">Center</string>
+    <string name="align_left">Left</string>
+    <string name="sync_captions">Show Gemini Live\'s text as its voice speaks it</string>
+    <string name="preview_original">Hello, how are you today?</string>
+    <string name="preview_description">Preview of the subtitles</string>
     <string name="show_original">Show original text above translation</string>
     <string name="text_size">Caption text size</string>
     <string name="start">Start captions</string>
@@ -82,4 +98,20 @@
     <string name="voice_turn_on">Turn on spoken translation</string>
     <string name="voice_turn_off">Turn off spoken translation</string>
     <string name="voice_waiting_headphones">Spoken translation: connect headphones</string>
+
+    <string name="control_pause">Pause</string>
+    <string name="control_resume">Resume</string>
+    <string name="control_original">Show or hide the original text</string>
+    <string name="control_smaller">Smaller text</string>
+    <string name="control_bigger">Bigger text</string>
+    <string name="control_style">Change subtitle style</string>
+    <string name="control_lock">Lock subtitles so touches reach the app underneath</string>
+    <string name="control_unlock">Unlock</string>
+    <string name="control_settings">Open Live Caption settings</string>
+    <string name="overlay_first_hint">Listening… Tap the subtitles for controls.</string>
+    <string name="overlay_paused">Paused. Tap the subtitles, then ▶ to resume.</string>
+    <string name="overlay_locked_hint">Locked: touches now reach the app underneath. Unlock from the notification or by opening Live Caption.</string>
+    <string name="overlay_description">Live subtitles. Tap for controls, drag to move.</string>
+    <string name="notification_paused">Live Caption is paused</string>
+    <string name="notification_locked">Subtitles are locked. Tap Unlock to use their controls again.</string>
 </resources>

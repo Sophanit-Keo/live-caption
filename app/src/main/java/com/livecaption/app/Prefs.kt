@@ -1,10 +1,19 @@
 package com.livecaption.app
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    /** Calls [onChange] (main thread) whenever a setting changes; returns a handle for [unwatch]. */
+    fun watch(onChange: (key: String?) -> Unit): SharedPreferences.OnSharedPreferenceChangeListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key -> onChange(key) }
+            .also { sp.registerOnSharedPreferenceChangeListener(it) }
+
+    fun unwatch(listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        sp.unregisterOnSharedPreferenceChangeListener(listener)
 
     init {
         // Version 0.1 stored the Khmer engine inside the language choice.
@@ -41,8 +50,48 @@ class Prefs(context: Context) {
         set(v) = sp.edit { putBoolean("showOriginal", v) }
 
     var textSizeSp: Float
-        get() = sp.getFloat("textSizeSp", 18f)
-        set(v) = sp.edit { putFloat("textSizeSp", v) }
+        get() = sp.getFloat("textSizeSp", 20f)
+        set(v) = sp.edit { putFloat("textSizeSp", v.coerceIn(MIN_TEXT_SP, MAX_TEXT_SP)) }
+
+    var subtitleStyle: SubtitleStyle
+        get() = SubtitleStyle.fromName(sp.getString("subtitleStyle", null))
+        set(v) = sp.edit { putString("subtitleStyle", v.name) }
+
+    /** Opacity of the caption box background, 0–1. */
+    var boxOpacity: Float
+        get() = sp.getFloat("boxOpacity", 0.7f)
+        set(v) = sp.edit { putFloat("boxOpacity", v.coerceIn(0f, 1f)) }
+
+    /** Lines of translated text shown at once. */
+    var captionLines: Int
+        get() = sp.getInt("captionLines", 2)
+        set(v) = sp.edit { putInt("captionLines", v.coerceIn(1, 4)) }
+
+    var centered: Boolean
+        get() = sp.getBoolean("centered", true)
+        set(v) = sp.edit { putBoolean("centered", v) }
+
+    /** Distance of the caption box from the bottom of the screen, in pixels; -1 = default. */
+    var overlayY: Int
+        get() = sp.getInt("overlayY", -1)
+        set(v) = sp.edit { putInt("overlayY", v) }
+
+    fun appearance() = SubtitleAppearance(subtitleStyle, textSizeSp, boxOpacity, captionLines, centered, showOriginal)
+
+    /** Gemini Live: show translated text when its voice says it, instead of as soon as it arrives. */
+    var syncCaptions: Boolean
+        get() = sp.getBoolean("syncCaptions", true)
+        set(v) = sp.edit { putBoolean("syncCaptions", v) }
+
+    /** Make Gemini Live's voice louder so it stands out over the original audio. */
+    var voiceBoost: Boolean
+        get() = sp.getBoolean("voiceBoost", true)
+        set(v) = sp.edit { putBoolean("voiceBoost", v) }
+
+    /** Optional description of what is being watched ("a football match"), to help translation. */
+    var topic: String
+        get() = sp.getString("topic", "") ?: ""
+        set(v) = sp.edit { putString("topic", v) }
 
     /** Speak translations aloud (Gemini Live's voice, or the phone's text-to-speech). */
     var voiceEnabled: Boolean
@@ -63,4 +112,12 @@ class Prefs(context: Context) {
     var allowSpeaker: Boolean
         get() = sp.getBoolean("allowSpeaker", false)
         set(v) = sp.edit { putBoolean("allowSpeaker", v) }
+
+    companion object {
+        const val MIN_TEXT_SP = 12f
+        const val MAX_TEXT_SP = 40f
+
+        /** Settings that change how captions look; applied to running captions at once. */
+        val APPEARANCE_KEYS = setOf("textSizeSp", "subtitleStyle", "boxOpacity", "captionLines", "centered", "showOriginal")
+    }
 }

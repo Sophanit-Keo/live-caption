@@ -24,6 +24,8 @@ class LiveTranslateSession(
     private val url: String,
     private val targetLanguage: String,
     private val listener: Listener,
+    /** Optional guidance for the interpreter, e.g. what is being watched. */
+    private val systemInstruction: String? = null,
 ) : WebSocketListener() {
 
     interface Listener {
@@ -67,6 +69,14 @@ class LiveTranslateSession(
         socket?.send(message)
     }
 
+    /**
+     * The audio stops for a while (captions paused): lets Gemini translate what it still holds.
+     * Sending audio again reopens the stream.
+     */
+    fun endAudioStream() {
+        if (isReady) socket?.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())
+    }
+
     fun close() {
         closedByUs = true
         socket?.close(1000, null)
@@ -79,14 +89,15 @@ class LiveTranslateSession(
                 "translationConfig",
                 JSONObject().put("targetLanguageCode", targetLanguage).put("echoTargetLanguage", false),
             )
-        return JSONObject().put(
-            "setup",
-            JSONObject()
-                .put("model", "models/$MODEL")
-                .put("inputAudioTranscription", JSONObject())
-                .put("outputAudioTranscription", JSONObject())
-                .put("generationConfig", generationConfig),
-        ).toString()
+        val setup = JSONObject()
+            .put("model", "models/$MODEL")
+            .put("inputAudioTranscription", JSONObject())
+            .put("outputAudioTranscription", JSONObject())
+            .put("generationConfig", generationConfig)
+        if (!systemInstruction.isNullOrBlank()) {
+            setup.put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
+        }
+        return JSONObject().put("setup", setup).toString()
     }
 
     override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -230,6 +241,11 @@ class LiveTranslator(
         active?.sendAudio(pcm)
     }
 
+    /** Audio stops for a while (paused); see [LiveTranslateSession.endAudioStream]. */
+    fun endAudioStream() {
+        active?.endAudioStream()
+    }
+
     fun stop() {
         stopped = true
         retryJob?.cancel()
@@ -326,5 +342,15 @@ class LiveTranslator(
         private const val RETIRE_AFTER_MS = 4_000L
 
         fun url(apiKey: String) = "${LiveTranslateSession.ENDPOINT}?key=$apiKey"
+
+        /**
+         * Translation guidance from the user's description of what they are watching. Live
+         * Translate only accepts guidance about the translation itself (terms, register).
+         */
+        fun instructionFor(topic: String, targetName: String): String? =
+            topic.trim().takeIf { it.isNotEmpty() }?.let {
+                "The audio is from: $it. Translate it into natural spoken $targetName, " +
+                    "keeping names and specialist terms accurate."
+            }
     }
 }

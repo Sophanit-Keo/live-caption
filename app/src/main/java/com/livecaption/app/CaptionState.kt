@@ -12,4 +12,7 @@ sealed interface CaptionStatus {
 
 object CaptionState {
     val status = MutableStateFlow<CaptionStatus>(CaptionStatus.Idle)
+
+    /** The floating captions ignore touches (see [CaptionOverlay.setLocked]). */
+    val locked = MutableStateFlow(false)
 }

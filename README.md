@@ -28,6 +28,40 @@ into the key field. Both Gemini engines work on the free tier; Google limits fre
 minute and per day. Live Translate on a paid key costs about $0.037 per minute of audio
 (Google's pricing page, November 2026).
 
+## Subtitles
+
+![Subtitle styles](docs/screenshots/subtitle-styles.png)
+
+Tap the floating subtitles for a toolbar; it hides again after a few seconds:
+
+![Subtitle toolbar](docs/screenshots/overlay-controls.png)
+
+| Button | Does |
+| --- | --- |
+| ⏸ / ▶ | Pause or resume (pausing finishes the sentence in progress first) |
+| 🔊 | Voice on / off (a headphone icon means it is waiting for headphones) |
+| A− / A+ | Smaller / bigger text |
+| Aa | Next style: Box, Outline (film-style, no box), High contrast (yellow on black) |
+| ▭ | Show or hide the original text above the translation |
+| 🔒 | Lock: touches go through to the app underneath, e.g. a video's controls. Unlock from the notification or by opening Live Caption |
+| ⚙ | Open Live Caption settings |
+| ✕ | Stop captions |
+
+- **Moving:** drag the subtitles up or down; the position is remembered.
+- **Readability:** a fixed number of lines (1–4) keeps the box from jumping, and the newest
+  words stay visible at the bottom.
+- **Dimmed words:** words that may still change (speech still being recognised) are drawn
+  dimmer.
+- **Status dot:** grey when listening, pulsing green when the translation is being spoken,
+  amber when connecting, dark when paused.
+- **Notification:** has Pause/Resume, Unlock (when locked) and Stop.
+
+In settings, the **Subtitles** section has a live preview with style, text size, background,
+lines and alignment. These settings, and the voice settings, apply to running captions
+immediately.
+
+![Subtitle settings](docs/screenshots/subtitle-settings.png)
+
 ## Spoken translation in headphones
 
 Turn on **Speak the translation in my headphones**. Then:
@@ -41,8 +75,20 @@ Turn on **Speak the translation in my headphones**. Then:
 - **No feedback**: the app's own voice is excluded from audio capture, so it is never
   captioned again. In Microphone mode without headphones, the microphone is muted while the
   phone speaks.
-- **Keeping up**: if speech piles up, the phone voice skips older sentences and talks a little
-  faster. Gemini Live's voice speeds up, and skips ahead when it falls more than 15 s behind.
+- **Gemini Live voice**:
+  - **Start buffer**: each phrase starts after a ~0.25 s buffer, so network hiccups don't make
+    it stutter.
+  - **Catching up**: when it falls behind the video it speeds up in steps (×1.1, ×1.25, ×1.4)
+    and returns to normal speed gradually. Beyond 12 s behind, the oldest speech is skipped.
+  - **Subtitles in sync**: translated subtitles appear when the voice says the words, not
+    seconds earlier. This can be switched off.
+  - **Louder voice**: optional, so it stands out over the original audio.
+- **Phone voice**:
+  - **No gaps**: the next sentence is queued while the current one plays.
+  - **Voice choice**: an installed, high-quality voice is preferred over a network voice,
+    which adds a delay before each sentence.
+  - **Keeping up**: if sentences pile up, older ones are skipped and the voice talks a little
+    faster.
 
 For the Offline and Gemini engines, the settings screen checks that your phone has a
 text-to-speech voice for the target language, offers to download it, and has a **Test voice**
@@ -57,6 +103,8 @@ button. Speech Services by Google includes Khmer.
   back to `gemini-flash-latest` if a key can't use it.
 - **No dropped sentences**: if sentences pile up, or Google's rate limit is hit, they are
   merged and translated together after the pause.
+- **Topic hint**: an optional "What are you watching?" field ("football match", "physics
+  lecture") is passed to both Gemini engines, to get names and specialist terms right.
 - **Sentence clean-up**: finished sentences get a capital letter and end punctuation before
   translation.
 - **Chinese and Japanese**: the word spaces that speech recognition inserts are removed.
@@ -73,6 +121,10 @@ Requires JDK 17+ and the Android SDK (platform 36).
 ```
 
 Every push also builds the APK in GitHub Actions (see the run's **Artifacts**).
+
+`./gradlew testDebugUnitTest -Pscreenshots` also renders the subtitle UI to
+`app/build/screenshots/` with Robolectric (it downloads Robolectric's Android runtime, ~200 MB,
+so it is off by default).
 
 `NllbModelTest` runs the real offline Khmer model on a desktop JVM when `NLLB_DIR` points at a
 folder with `tokenizer.json` and the two `.onnx` files; it is skipped otherwise. The Gemini
@@ -102,11 +154,14 @@ and Live Translate tests run against local fake servers; they do not call Google
 | --- | --- |
 | `MainActivity` | Settings screen, permission flow, voice check and preview |
 | `CaptionService` | Foreground service: capture → recognise/translate → overlay and voice |
-| `CaptionOverlay` | Floating, draggable subtitle window with close and voice buttons |
+| `CaptionOverlay` | Floating, draggable subtitle window and its toolbar (pause, voice, size, style, lock…) |
+| `SubtitleView` | The caption box: styles, outlined text, newest lines at the bottom, status dot |
+| `CaptionScheduler` | Shows Gemini Live's text when its voice speaks it, in order |
 | `TranslationPipeline` | What to translate when: merging, context, rate-limit back-off |
 | `TextTranslator` | ML Kit, Gemini and offline-Khmer translators |
 | `LiveTranslate` | Gemini Live Translate WebSocket session and reconnecting manager |
 | `VoiceOutput` | Text-to-speech voice, PCM player, ducking, headphone detection |
+| `SpeechQueue` | Which sentences to speak and how fast (`PlaybackPacing` for Gemini's voice) |
 | `Languages`, `TextTidy` | Target language catalog per engine; text clean-up |
 | `NllbTranslator`, `NllbTokenizer` | Offline NLLB-200 inference and its tokenizer |
 | `ModelManager` | Downloads and unpacks speech models |

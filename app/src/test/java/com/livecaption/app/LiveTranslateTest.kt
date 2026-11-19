@@ -165,6 +165,10 @@ class LiveTranslateTest {
         gemini.send("""{"goAway":{"timeLeft":"12.5s"}}""")
         assertEquals("goaway:12500", events.next())
 
+        // Pausing tells Gemini the audio stopped, so it translates what it still holds.
+        session.endAudioStream()
+        assertTrue(gemini.next().getJSONObject("realtimeInput").getBoolean("audioStreamEnd"))
+
         session.close()
         assertEquals("closed:true:null", events.next())
     }

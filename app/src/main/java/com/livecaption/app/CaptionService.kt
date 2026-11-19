@@ -1,5 +1,6 @@
 package com.livecaption.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Notification
@@ -9,7 +10,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
@@ -17,6 +21,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -64,6 +69,7 @@ class CaptionService : Service() {
     private var started = false
     private var failed = false
     private lateinit var prefs: Prefs
+    private var prefsWatcher: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     private var projection: MediaProjection? = null
     private var overlay: CaptionOverlay? = null
@@ -72,6 +78,11 @@ class CaptionService : Service() {
     private var engine = TranslationEngine.OFFLINE
     private var target: TargetLanguage? = null
     private var sourceTag = "en"
+
+    /** Paused from the captions' toolbar or the notification: audio is ignored. */
+    @Volatile private var paused = false
+    private var locked = false
+    private var connecting = true
 
     // Offline / Gemini text engines.
     private var translator: TextTranslator? = null
@@ -84,6 +95,7 @@ class CaptionService : Service() {
     private var live: LiveTranslator? = null
     private val liveOriginal = RollingText(clock = clock)
     private val liveTranslated = RollingText(clock = clock)
+    private val captionTimer = CaptionScheduler(scope, clock)
 
     // Spoken translation.
     private var headphones: HeadphoneMonitor? = null
@@ -106,8 +118,20 @@ class CaptionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null || intent.action == ACTION_STOP) {
+        val action = intent?.action
+        if (intent == null || action == ACTION_STOP) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (action == ACTION_TOGGLE_PAUSE || action == ACTION_UNLOCK) {
+            // Toolbar/notification commands for running captions; never start captions by themselves.
+            if (!started) {
+                stopSelf()
+            } else if (action == ACTION_TOGGLE_PAUSE) {
+                togglePause()
+            } else {
+                overlay?.setLocked(false)
+            }
             return START_NOT_STICKY
         }
         if (started) return START_NOT_STICKY
@@ -139,6 +163,7 @@ class CaptionService : Service() {
             ?.takeIf { engine == TranslationEngine.LIVE || it.tag != language.translateTag }
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val projectionData = IntentCompat.getParcelableExtra(intent, EXTRA_PROJECTION_DATA, Intent::class.java)
+        prefsWatcher = prefs.watch(::onSettingChanged)
 
         scope.launch {
             try {
@@ -167,8 +192,8 @@ class CaptionService : Service() {
 
         try {
             if (record.state != AudioRecord.STATE_INITIALIZED) throw IOException(getString(R.string.audio_open_failed))
-            overlay = CaptionOverlay(this, prefs.textSizeSp, onClose = { stopSelf() }, onVoiceToggle = ::toggleVoice)
-                .also { it.show() }
+            overlay = CaptionOverlay(this, prefs, overlayActions).also { it.show() }
+            updateIndicator()
             startVoice()
             if (engine == TranslationEngine.LIVE) runLive(record) else runText(record, language)
         } finally {
@@ -197,6 +222,7 @@ class CaptionService : Service() {
                     engine == TranslationEngine.GEMINI -> GeminiTranslator(
                         prefs.geminiApiKey, language.label, t,
                         connectingMessage = getString(R.string.status_connecting_translation),
+                        topic = prefs.topic,
                     )
                     t.tag == TargetLanguage.KHMER -> OfflineKhmerTranslator(this, language.translateTag)
                     else -> MlKitTranslator(this, language.translateTag, t.mlKit!!)
@@ -221,10 +247,22 @@ class CaptionService : Service() {
             val buffer = ShortArray(SAMPLE_RATE / 5) // 200 ms
             val silence = ShortArray(buffer.size)
             var lastPartial = ""
+            var wasPaused = false
             while (isActive) {
                 val n = record.read(buffer, 0, buffer.size)
                 if (n < 0) throw IOException("Audio capture stopped (error $n)")
                 if (n == 0) continue
+                if (paused) {
+                    if (!wasPaused) {
+                        // Finish the sentence in progress, so it is translated rather than lost.
+                        wasPaused = true
+                        lastPartial = ""
+                        val text = parseVoskResult(recognizer.finalResult, "text")
+                        if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text) }
+                    }
+                    continue
+                }
+                wasPaused = false
                 if (recognizer.acceptWaveForm(if (muteInput) silence else buffer, n)) {
                     lastPartial = ""
                     val text = parseVoskResult(recognizer.result, "text")
@@ -266,7 +304,7 @@ class CaptionService : Service() {
         override fun onFinalTranslation(line: TranslatedLine) {
             translated.commit(line.translation)
             render()
-            if (voiceAllowed()) tts?.speak(line.translation)
+            if (voiceAllowed() && !paused) tts?.speak(line.translation)
         }
 
         override fun onRateLimited(retryAfterMs: Long) {
@@ -291,7 +329,8 @@ class CaptionService : Service() {
     // region Gemini Live engine
 
     private suspend fun runLive(record: AudioRecord) {
-        val code = target?.live ?: throw IllegalStateException(getString(R.string.live_needs_target))
+        val t = target ?: throw IllegalStateException(getString(R.string.live_needs_target))
+        val code = t.live ?: throw IllegalStateException(getString(R.string.engine_unsupported_language))
         status(getString(R.string.status_connecting_live))
         val client = OkHttpClient.Builder()
             .pingInterval(20, TimeUnit.SECONDS) // Notice dead connections quickly and reconnect.
@@ -299,7 +338,12 @@ class CaptionService : Service() {
             .build()
             .also { http = it }
         val url = LiveTranslator.url(prefs.geminiApiKey)
-        val translator = LiveTranslator(scope, { listener -> LiveTranslateSession(client, url, code, listener) }, liveEvents)
+        val instruction = LiveTranslator.instructionFor(prefs.topic, t.englishName)
+        val translator = LiveTranslator(
+            scope,
+            { listener -> LiveTranslateSession(client, url, code, listener, instruction) },
+            liveEvents,
+        )
         live = translator
         translator.start()
         streamAudio(record, translator)
@@ -313,7 +357,7 @@ class CaptionService : Service() {
             while (isActive) {
                 val n = record.read(samples, 0, samples.size)
                 if (n < 0) throw IOException("Audio capture stopped (error $n)")
-                if (n == 0) continue
+                if (n == 0 || paused) continue
                 val bytes = ByteArray(n * 2)
                 if (!muteInput) ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(samples, 0, n)
                 translator.sendAudio(bytes)
@@ -325,10 +369,13 @@ class CaptionService : Service() {
 
     private val liveEvents = object : LiveTranslator.Events {
         override fun onConnected() {
-            if (CaptionState.status.value != CaptionStatus.Running) running()
+            connecting = false
+            if (CaptionState.status.value != CaptionStatus.Running) running() else updateIndicator()
         }
 
         override fun onReconnecting() {
+            connecting = true
+            updateIndicator()
             overlay?.setStatus(getString(R.string.status_reconnecting_live))
         }
 
@@ -338,23 +385,32 @@ class CaptionService : Service() {
         }
 
         override fun onOutputTranscript(text: String) {
-            liveTranslated.append(text)
-            render()
+            // Show the words when the voice says them, not seconds earlier.
+            val p = player
+            val delayMs = if (p != null && voiceAllowed() && prefs.syncCaptions) {
+                (p.backlogMs() / p.speed).toLong().coerceAtMost(MAX_CAPTION_DELAY_MS)
+            } else {
+                0L
+            }
+            captionTimer.post(delayMs) {
+                liveTranslated.append(text)
+                render()
+            }
         }
 
         override fun onAudio(pcm: ByteArray, sampleRate: Int) {
-            if (!voiceAllowed()) return
+            if (!voiceAllowed() || paused) return
             val current = player
             val p = if (current != null && current.sampleRate == sampleRate) current else {
                 current?.release()
-                PcmPlayer(sampleRate, ::onSpeakingChanged).also { player = it }
+                PcmPlayer(sampleRate, prefs.voiceBoost, ::onSpeakingChanged).also { player = it }
             }
             p.enqueue(pcm)
         }
 
         override fun onTurnComplete() {
             liveOriginal.endSegment()
-            liveTranslated.endSegment()
+            captionTimer.post(0) { liveTranslated.endSegment() }
         }
 
         override fun onInterrupted() {
@@ -362,6 +418,81 @@ class CaptionService : Service() {
         }
 
         override fun onFatal(message: String) = fail(IOException(message))
+    }
+
+    // endregion
+
+    // region Controls on the captions
+
+    private val overlayActions = object : CaptionOverlay.Actions {
+        override fun onClose() = stopSelf()
+
+        override fun onVoiceToggle() = toggleVoice()
+
+        override fun onPauseToggle() = togglePause()
+
+        override fun onLockChanged(locked: Boolean) {
+            this@CaptionService.locked = locked
+            CaptionState.locked.value = locked
+            updateNotification()
+        }
+
+        override fun onOpenSettings() {
+            startActivity(
+                Intent(this@CaptionService, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+    }
+
+    private fun togglePause() {
+        paused = !paused
+        if (paused) {
+            stopSpeaking()
+            live?.endAudioStream()
+            overlay?.setStatus(getString(R.string.overlay_paused))
+        } else {
+            overlay?.setStatus(getString(R.string.listening))
+        }
+        overlay?.setPaused(paused)
+        updateIndicator()
+        updateNotification()
+    }
+
+    /** Settings changed (on the captions' toolbar, or in the app while captions run). */
+    private fun onSettingChanged(key: String?) {
+        when (key) {
+            in Prefs.APPEARANCE_KEYS -> {
+                showOriginal = prefs.showOriginal
+                overlay?.applyAppearance()
+                render()
+            }
+            "voiceRate" -> tts?.baseRate = prefs.voiceRate
+            "duckOthers" -> focus?.duckOthers = prefs.duckOthers
+            "voiceBoost" -> player?.setBoost(prefs.voiceBoost)
+            "allowSpeaker" -> {
+                if (!voiceAllowed()) stopSpeaking()
+                updateInputMute()
+                updateVoiceButton()
+            }
+            "voiceEnabled" -> if (prefs.voiceEnabled != voiceOn) toggleVoice()
+        }
+    }
+
+    private fun updateIndicator() {
+        overlay?.setIndicator(
+            when {
+                paused -> CaptionIndicator.PAUSED
+                connecting -> CaptionIndicator.CONNECTING
+                voiceSpeaking -> CaptionIndicator.SPEAKING
+                else -> CaptionIndicator.LISTENING
+            },
+        )
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        overlay?.onConfigurationChanged()
     }
 
     // endregion
@@ -391,7 +522,7 @@ class CaptionService : Service() {
 
     private fun toggleVoice() {
         voiceOn = !voiceOn
-        prefs.voiceEnabled = voiceOn
+        if (prefs.voiceEnabled != voiceOn) prefs.voiceEnabled = voiceOn
         if (!voiceOn) {
             stopSpeaking()
         } else {
@@ -417,7 +548,7 @@ class CaptionService : Service() {
         val t = target ?: return
         if (tts != null || ttsLookup?.isActive == true) return
         ttsLookup = scope.launch {
-            when (val result = TtsVoice.find(this@CaptionService, t.voiceLocale)) {
+            when (val result = PhoneVoices.find(this@CaptionService, t.voiceLocale)) {
                 is VoiceLookup.Ready -> tts = TtsVoice(result.tts, prefs.voiceRate, ::onSpeakingChanged)
                 is VoiceLookup.NeedsDownload -> toast(getString(R.string.voice_needs_download, t.displayName()))
                 VoiceLookup.Unsupported -> toast(getString(R.string.voice_unsupported, t.displayName()))
@@ -431,9 +562,11 @@ class CaptionService : Service() {
     }
 
     private fun onSpeakingChanged(speaking: Boolean) {
+        if (voiceSpeaking == speaking) return
         voiceSpeaking = speaking
         focus?.setSpeaking(speaking)
         updateInputMute()
+        updateIndicator()
     }
 
     private fun updateInputMute() {
@@ -444,22 +577,25 @@ class CaptionService : Service() {
 
     private fun render() {
         val overlay = overlay ?: return
+        val none = CaptionText.EMPTY
         when {
             engine == TranslationEngine.LIVE -> {
-                val translation = liveTranslated.render()
-                val source = liveOriginal.render()
-                if (translation.isEmpty()) overlay.setCaption(source, "")
-                else overlay.setCaption(translation, if (showOriginal) source else "")
+                val translation = liveTranslated.renderParts()
+                val source = liveOriginal.renderParts()
+                if (translation.isEmpty) overlay.setCaption(source, none)
+                else overlay.setCaption(translation, if (showOriginal) source else none)
             }
-            translator == null -> overlay.setCaption(original.render(), "")
-            else -> overlay.setCaption(translated.render(), if (showOriginal) original.render() else "")
+            translator == null -> overlay.setCaption(original.renderParts(), none)
+            else -> overlay.setCaption(translated.renderParts(), if (showOriginal) original.renderParts() else none)
         }
     }
 
     private fun running() {
+        connecting = false
         CaptionState.status.value = CaptionStatus.Running
-        overlay?.setStatus(getString(R.string.listening))
+        overlay?.setStatus(getString(if (paused) R.string.overlay_paused else R.string.listening))
         updateVoiceButton()
+        updateIndicator()
     }
 
     @SuppressLint("MissingPermission") // RECORD_AUDIO is granted before the service is started.
@@ -516,6 +652,7 @@ class CaptionService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        prefsWatcher?.let { prefs.unwatch(it) }
         live?.stop()
         pipeline?.close()
         overlay?.hide()
@@ -532,6 +669,7 @@ class CaptionService : Service() {
             it.unregisterCallback(projectionCallback)
             it.stop()
         }
+        CaptionState.locked.value = false
         if (!failed) CaptionState.status.value = CaptionStatus.Idle
         super.onDestroy()
     }
@@ -544,17 +682,32 @@ class CaptionService : Service() {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, CaptionService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_caption)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
+            .setContentTitle(getString(if (paused) R.string.notification_paused else R.string.notification_title))
+            .setContentText(getString(if (locked) R.string.notification_locked else R.string.notification_text))
             .setContentIntent(open)
             .setOngoing(true)
-            .addAction(0, getString(R.string.stop), stop)
-            .build()
+            .setOnlyAlertOnce(true)
+        if (locked) builder.addAction(0, getString(R.string.control_unlock), serviceIntent(ACTION_UNLOCK, 3))
+        builder.addAction(
+            0, getString(if (paused) R.string.control_resume else R.string.control_pause), serviceIntent(ACTION_TOGGLE_PAUSE, 2),
+        )
+        builder.addAction(0, getString(R.string.stop), serviceIntent(ACTION_STOP, 1))
+        return builder.build()
+    }
+
+    private fun serviceIntent(action: String, requestCode: Int): PendingIntent = PendingIntent.getService(
+        this, requestCode, Intent(this, CaptionService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun updateNotification() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
     }
 
     companion object {
@@ -563,8 +716,13 @@ class CaptionService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "captions"
         private const val ACTION_STOP = "com.livecaption.app.STOP"
+        private const val ACTION_TOGGLE_PAUSE = "com.livecaption.app.TOGGLE_PAUSE"
+        private const val ACTION_UNLOCK = "com.livecaption.app.UNLOCK"
         private const val EXTRA_RESULT_CODE = "resultCode"
         private const val EXTRA_PROJECTION_DATA = "projectionData"
+
+        /** Translated text appears at most this much later than it arrives (to match the voice). */
+        private const val MAX_CAPTION_DELAY_MS = 4_000L
 
         /** [projectionData] is the screen-capture consent result; null for microphone mode. */
         fun start(context: Context, resultCode: Int = Activity.RESULT_CANCELED, projectionData: Intent? = null) {
@@ -577,6 +735,11 @@ class CaptionService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, CaptionService::class.java))
+        }
+
+        /** Makes locked captions touchable again. */
+        fun unlock(context: Context) {
+            context.startService(Intent(context, CaptionService::class.java).setAction(ACTION_UNLOCK))
         }
     }
 }

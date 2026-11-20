@@ -176,6 +176,9 @@ class MainActivity : AppCompatActivity() {
         }
         showOriginal.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.showOriginal = checked } }
         syncCaptions.setOnCheckedChangeListener { _, checked -> prefs.syncCaptions = checked }
+        saveTranscripts.isChecked = prefs.saveTranscripts
+        saveTranscripts.setOnCheckedChangeListener { _, checked -> prefs.saveTranscripts = checked }
+        openTranscripts.setOnClickListener { startActivity(Intent(this@MainActivity, TranscriptsActivity::class.java)) }
         loadSubtitleSettings()
 
         onEngineChanged()
@@ -391,7 +394,7 @@ class MainActivity : AppCompatActivity() {
         // Looks and voice settings apply to running captions at once.
         listOf(
             engineOffline, engineGemini, engineLive, apiKeyLayout, topicLayout, sourceLanguage, targetLanguage,
-            sourceDevice, sourceMic,
+            sourceDevice, sourceMic, saveTranscripts,
         ).forEach { it.isEnabled = editable }
     }
 

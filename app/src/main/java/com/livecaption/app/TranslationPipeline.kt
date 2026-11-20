@@ -24,6 +24,9 @@ class TranslationPipeline(
         fun onFinalTranslation(line: TranslatedLine)
         fun onRateLimited(retryAfterMs: Long) = Unit
         fun onError(e: Exception) = Unit
+
+        /** A finished sentence that will never be translated (failed, or too stale to show). */
+        fun onUntranslated(text: String) = Unit
     }
 
     private val finals = ArrayDeque<String>()
@@ -75,14 +78,18 @@ class TranslationPipeline(
 
     private suspend fun translateFinals() {
         // Stale sentences are not worth showing late: keep the merged request short.
-        while (finals.size > 1 && finals.sumOf { it.length + 1 } > MAX_MERGED_CHARS) finals.removeFirst()
+        while (finals.size > 1 && finals.sumOf { it.length + 1 } > MAX_MERGED_CHARS) {
+            listener.onUntranslated(finals.removeFirst())
+        }
         val count = finals.size
         val text = finals.joinToString(" ")
         try {
             val result = translator.translate(text, history.toList())
-            repeat(count) { finals.removeFirst() }
-            if (result.isNotBlank()) {
-                val line = TranslatedLine(text, result)
+            val merged = List(count) { finals.removeFirst() }
+            if (result.isBlank()) {
+                merged.forEach(listener::onUntranslated)
+            } else {
+                val line = TranslatedLine(text, result, count)
                 history.addLast(line)
                 while (history.size > CONTEXT_LINES) history.removeFirst()
                 listener.onFinalTranslation(line)
@@ -93,7 +100,7 @@ class TranslationPipeline(
             // Keep the sentences: they are merged with newer ones and sent after the pause.
             backOff(e)
         } catch (e: Exception) {
-            repeat(count) { finals.removeFirst() }
+            repeat(count) { listener.onUntranslated(finals.removeFirst()) }
             listener.onError(e)
         }
     }

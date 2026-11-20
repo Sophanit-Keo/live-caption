@@ -9,15 +9,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 
-/** A finished caption and its translation, kept as context for the next ones. */
-data class TranslatedLine(val source: String, val translation: String)
+/**
+ * A finished caption and its translation, kept as context for the next ones. [parts] is how
+ * many finished sentences were merged into [source] (they pile up when translation is slow).
+ */
+data class TranslatedLine(val source: String, val translation: String, val parts: Int = 1)
 
 /** The service asked us to slow down; try again after [retryAfterMs]. */
 class RateLimitedException(val retryAfterMs: Long, message: String) : IOException(message)
@@ -108,9 +107,6 @@ class OfflineKhmerTranslator(private val context: Context, private val sourceTag
     }
 }
 
-/** Error reply from the Gemini API. */
-class GeminiException(val code: Int, message: String) : IOException(message)
-
 /**
  * Online translation with the Gemini API, using the user's own API key. Sends the last few
  * finished captions as context so names, pronouns and terms stay consistent.
@@ -119,14 +115,11 @@ class GeminiTranslator(
     private val apiKey: String,
     private val sourceName: String,
     private val target: TargetLanguage,
-    private val baseUrl: String = BASE_URL,
+    private val baseUrl: String = Gemini.BASE_URL,
     private val connectingMessage: String = "",
     /** Optional description of what is being watched, to help with terms and names. */
     private val topic: String = "",
 ) : TextTranslator {
-
-    /** A model to try, with the thinking level that keeps it fast (null = model default). */
-    data class ModelChoice(val id: String, val thinkingLevel: String?)
 
     private var model = MODELS.first()
 
@@ -140,66 +133,21 @@ class GeminiTranslator(
     /** Picks the first model this key can use; a wrong key fails here, before captions start. */
     override suspend fun prepare(onStatus: (String) -> Unit) {
         if (connectingMessage.isNotEmpty()) onStatus(connectingMessage)
-        var lastError: Exception? = null
-        for (candidate in MODELS) {
-            var choice = candidate
-            while (true) {
-                try {
-                    request(choice, "Hello", emptyList())
-                    model = choice
-                    return
-                } catch (e: RateLimitedException) {
-                    model = choice // The key works; it is only out of quota for the moment.
-                    return
-                } catch (e: GeminiException) {
-                    lastError = e
-                    when {
-                        // Model not available to this key or region: try the next one.
-                        e.code == 404 -> break
-                        // Older models reject thinking levels: retry with the model's default.
-                        e.code == 400 && choice.thinkingLevel != null && e.message.orEmpty().contains("thinking", true) ->
-                            choice = choice.copy(thinkingLevel = null)
-                        else -> throw e
-                    }
-                }
+        model = Gemini.withFallback(MODELS) { candidate ->
+            try {
+                request(candidate, "Hello", emptyList())
+            } catch (e: RateLimitedException) {
+                "" // The key works; it is only out of quota for the moment.
             }
-        }
-        throw lastError ?: IOException("No Gemini model available")
+        }.first
     }
 
     override suspend fun translate(text: String, context: List<TranslatedLine>): String = request(model, text, context)
 
-    private suspend fun request(choice: ModelChoice, text: String, context: List<TranslatedLine>): String =
-        withContext(Dispatchers.IO) {
-            val body = buildRequest(choice, text, context).toByteArray()
-            val conn = URL("$baseUrl/v1beta/models/${choice.id}:generateContent").openConnection() as HttpURLConnection
-            try {
-                conn.connectTimeout = 8_000
-                conn.readTimeout = 20_000
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                conn.setRequestProperty("x-goog-api-key", apiKey)
-                conn.outputStream.use { it.write(body) }
-                val code = conn.responseCode
-                val response = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-                when {
-                    code in 200..299 -> parseTranslation(response)
-                    code == 429 -> {
-                        val retry = parseRetryDelayMs(response)
-                            ?: conn.getHeaderField("Retry-After")?.toLongOrNull()?.times(1000)
-                            ?: DEFAULT_RETRY_MS
-                        throw RateLimitedException(retry, parseError(response) ?: "Gemini rate limit reached")
-                    }
-                    else -> throw GeminiException(code, parseError(response) ?: "Gemini error (HTTP $code)")
-                }
-            } finally {
-                conn.disconnect()
-            }
-        }
+    private suspend fun request(choice: Gemini.Model, text: String, context: List<TranslatedLine>): String =
+        Gemini.generate(baseUrl, apiKey, choice, buildRequest(choice, text, context))
 
-    internal fun buildRequest(choice: ModelChoice, text: String, context: List<TranslatedLine>): String {
+    internal fun buildRequest(choice: Gemini.Model, text: String, context: List<TranslatedLine>): String {
         val targetName = target.englishName
         val instruction = buildString {
             append("You are a professional interpreter writing live subtitles. ")
@@ -225,68 +173,19 @@ class GeminiTranslator(
             }
             append("Translate this caption:\n").append(text)
         }
-        val generationConfig = JSONObject()
-        choice.thinkingLevel?.let { generationConfig.put("thinkingConfig", JSONObject().put("thinkingLevel", it)) }
-        return JSONObject()
-            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", instruction))))
-            .put(
-                "contents",
-                JSONArray().put(
-                    JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userText))),
-                ),
-            )
-            .put("generationConfig", generationConfig)
-            .toString()
+        return Gemini.requestBody(choice, instruction, userText)
     }
 
     override fun close() = Unit
 
     companion object {
-        const val BASE_URL = "https://generativelanguage.googleapis.com"
-        private const val DEFAULT_RETRY_MS = 10_000L
-
         /**
          * Tried in order. 3.5 Flash-Lite is Google's low-latency model for translation and thinks
          * minimally by default; the Flash alias is a fallback for keys without access to it.
          */
         val MODELS = listOf(
-            ModelChoice("gemini-3.5-flash-lite", null),
-            ModelChoice("gemini-flash-latest", "low"),
+            Gemini.Model("gemini-3.5-flash-lite", null),
+            Gemini.Model("gemini-flash-latest", "low"),
         )
-
-        fun parseTranslation(response: String): String {
-            val json = JSONObject(response)
-            val parts = json.optJSONArray("candidates")?.optJSONObject(0)
-                ?.optJSONObject("content")?.optJSONArray("parts")
-                ?: throw IOException(
-                    json.optJSONObject("promptFeedback")?.optString("blockReason")
-                        ?.takeIf { it.isNotEmpty() }?.let { "Gemini blocked this caption ($it)" }
-                        ?: "Gemini returned no translation",
-                )
-            return (0 until parts.length())
-                .map { parts.getJSONObject(it) }
-                .filterNot { it.optBoolean("thought") }
-                .joinToString("") { it.optString("text") }
-                .trim()
-        }
-
-        fun parseError(response: String): String? =
-            try {
-                JSONObject(response).getJSONObject("error").getString("message").takeIf { it.isNotBlank() }
-            } catch (e: Exception) {
-                null
-            }
-
-        /** Reads `google.rpc.RetryInfo.retryDelay` (for example "17s" or "1.5s") from an error reply. */
-        fun parseRetryDelayMs(response: String): Long? =
-            try {
-                val details = JSONObject(response).getJSONObject("error").optJSONArray("details")
-                (0 until (details?.length() ?: 0))
-                    .mapNotNull { details!!.optJSONObject(it)?.optString("retryDelay")?.takeIf { d -> d.endsWith("s") } }
-                    .firstNotNullOfOrNull { it.dropLast(1).toDoubleOrNull() }
-                    ?.let { (it * 1000).toLong() }
-            } catch (e: Exception) {
-                null
-            }
     }
 }

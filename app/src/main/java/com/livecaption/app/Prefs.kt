@@ -93,6 +93,16 @@ class Prefs(context: Context) {
         get() = sp.getString("topic", "") ?: ""
         set(v) = sp.edit { putString("topic", v) }
 
+    /** Keep a transcript of each captions session on the phone (for reading, summaries, export). */
+    var saveTranscripts: Boolean
+        get() = sp.getBoolean("saveTranscripts", true)
+        set(v) = sp.edit { putBoolean("saveTranscripts", v) }
+
+    /** English name of the language summaries were last written in; empty = translation language. */
+    var summaryLanguage: String
+        get() = sp.getString("summaryLanguage", "") ?: ""
+        set(v) = sp.edit { putString("summaryLanguage", v) }
+
     /** Speak translations aloud (Gemini Live's voice, or the phone's text-to-speech). */
     var voiceEnabled: Boolean
         get() = sp.getBoolean("voiceEnabled", true)

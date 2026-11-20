@@ -162,7 +162,7 @@ class LiveTranslateSession(
         val error = when {
             closedByUs -> null
             response != null -> "Gemini Live refused the connection (HTTP ${response.code})" +
-                (runCatching { response.body?.string() }.getOrNull()?.let { GeminiTranslator.parseError(it) }?.let { ": $it" } ?: "")
+                (runCatching { response.body?.string() }.getOrNull()?.let { Gemini.parseError(it) }?.let { ": $it" } ?: "")
             else -> t.message ?: "Connection to Gemini Live failed"
         }
         finish(error)

@@ -43,6 +43,7 @@ Tap the floating subtitles for a toolbar; it hides again after a few seconds:
 | A− / A+ | Smaller / bigger text |
 | Aa | Next style: Box, Outline (film-style, no box), High contrast (yellow on black) |
 | ▭ | Show or hide the original text above the translation |
+| 📄 | Open the transcript of this session (read it, summarize what was said so far) |
 | 🔒 | Lock: touches go through to the app underneath, e.g. a video's controls. Unlock from the notification or by opening Live Caption |
 | ⚙ | Open Live Caption settings |
 | ✕ | Stop captions |
@@ -61,6 +62,27 @@ lines and alignment. These settings, and the voice settings, apply to running ca
 immediately.
 
 ![Subtitle settings](docs/screenshots/subtitle-settings.png)
+
+## Transcripts and summaries
+
+While captions run, every finished line (original, translation and time) is saved on the phone,
+one file per session. Turn this off under **Transcripts and summaries** in settings.
+
+| Saved sessions | A transcript with its summary |
+| --- | --- |
+| ![Saved transcripts](docs/screenshots/transcripts.png) | ![Transcript and summary](docs/screenshots/transcript-summary.png) |
+
+- **Summary**: written by Gemini with your key: a title, a short overview, key points, and
+  action items when there are decisions, tasks or questions. It is written in the translation
+  language by default; you can pick the spoken language, the phone's language or English
+  instead. While captions run, "Summarize so far" covers everything said up to that point.
+- **Share / Copy** the transcript, with its summary, as text.
+- **Save as file**: a text file (`.txt`), or a subtitle file (`.srt`) with the translation and
+  original for each line, timed from when captions started.
+- **Delete**: one transcript, or all of them (the one being recorded is kept).
+
+Files are written as captions arrive, so a transcript survives the app being closed. Sessions in
+which nothing was said are not kept. Transcripts are excluded from backups.
 
 ## Spoken translation in headphones
 
@@ -162,6 +184,9 @@ and Live Translate tests run against local fake servers; they do not call Google
 | `LiveTranslate` | Gemini Live Translate WebSocket session and reconnecting manager |
 | `VoiceOutput` | Text-to-speech voice, PCM player, ducking, headphone detection |
 | `SpeechQueue` | Which sentences to speak and how fast (`PlaybackPacing` for Gemini's voice) |
+| `Transcript` | Saving sessions (`TranscriptStore`), and text/.srt export (`TranscriptFormat`) |
+| `Gemini` | Shared Gemini API calls and model fallback; `Summarizer` |
+| `TranscriptsActivity`, `TranscriptActivity` | Saved sessions; one transcript with summary, share and save |
 | `Languages`, `TextTidy` | Target language catalog per engine; text clean-up |
 | `NllbTranslator`, `NllbTokenizer` | Offline NLLB-200 inference and its tokenizer |
 | `ModelManager` | Downloads and unpacks speech models |

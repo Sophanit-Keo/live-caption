@@ -51,6 +51,7 @@ import org.vosk.Recognizer
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -105,6 +106,20 @@ class CaptionService : Service() {
     private var player: PcmPlayer? = null
     private var voiceOn = false
     private var voiceSpeaking = false
+
+    // Transcript of this session. The writer is only used on [transcriptIo].
+    private val transcriptIo = Executors.newSingleThreadExecutor()
+    private var transcriptStore: TranscriptStore? = null
+    private var transcriptWriter: TranscriptWriter? = null
+    private var transcriptId: String? = null
+    private var sessionStart = 0L
+    private var sentenceStart: Long? = null
+
+    /** Start/end times of finished sentences still being translated, oldest first. */
+    private val sentenceTimes = ArrayDeque<LongArray>()
+    private val liveInput = StringBuilder()
+    private val liveOutput = StringBuilder()
+    private var liveSegmentStart: Long? = null
 
     /** Microphone + phone speaker: the microphone would hear our own voice, so it is muted while we speak. */
     @Volatile private var muteInput = false
@@ -164,6 +179,7 @@ class CaptionService : Service() {
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val projectionData = IntentCompat.getParcelableExtra(intent, EXTRA_PROJECTION_DATA, Intent::class.java)
         prefsWatcher = prefs.watch(::onSettingChanged)
+        startTranscript(language)
 
         scope.launch {
             try {
@@ -282,6 +298,7 @@ class CaptionService : Service() {
     }
 
     private fun onPartial(raw: String) {
+        if (sentenceStart == null) sentenceStart = clock()
         val text = TextTidy.transcript(raw, sourceTag).capitalizeFirst()
         original.setLive(text)
         pipeline?.submitPartial(text)
@@ -290,9 +307,27 @@ class CaptionService : Service() {
 
     private fun onFinal(raw: String) {
         val sentence = TextTidy.sentence(raw, sourceTag)
+        val end = clock()
+        val start = sentenceStart ?: (end - 1_000)
+        sentenceStart = null
         original.commit(sentence)
-        pipeline?.submitFinal(sentence)
+        val p = pipeline
+        if (p == null) {
+            recordLine(sentence, null, start, end)
+        } else {
+            sentenceTimes.addLast(longArrayOf(start, end))
+            p.submitFinal(sentence)
+        }
         render()
+    }
+
+    /** Times of the next [count] translated sentences (merged translations cover several). */
+    private fun takeSentenceTimes(count: Int): LongArray {
+        val now = clock()
+        val first = sentenceTimes.removeFirstOrNull() ?: return longArrayOf(now, now)
+        var end = first[1]
+        repeat(count - 1) { sentenceTimes.removeFirstOrNull()?.let { end = it[1] } }
+        return longArrayOf(first[0], end)
     }
 
     private val pipelineListener = object : TranslationPipeline.Listener {
@@ -304,7 +339,14 @@ class CaptionService : Service() {
         override fun onFinalTranslation(line: TranslatedLine) {
             translated.commit(line.translation)
             render()
+            val times = takeSentenceTimes(line.parts)
+            recordLine(line.source, line.translation, times[0], times[1])
             if (voiceAllowed() && !paused) tts?.speak(line.translation)
+        }
+
+        override fun onUntranslated(text: String) {
+            val times = takeSentenceTimes(1)
+            recordLine(text, null, times[0], times[1])
         }
 
         override fun onRateLimited(retryAfterMs: Long) {
@@ -380,11 +422,19 @@ class CaptionService : Service() {
         }
 
         override fun onInputTranscript(text: String, interim: Boolean) {
-            if (interim) liveOriginal.setInterim(text) else liveOriginal.append(text)
+            if (interim) {
+                liveOriginal.setInterim(text)
+            } else {
+                liveOriginal.append(text)
+                if (liveSegmentStart == null) liveSegmentStart = clock()
+                liveInput.append(text)
+                if (liveInput.length > MAX_LIVE_SEGMENT_CHARS) flushLiveSegment()
+            }
             render()
         }
 
         override fun onOutputTranscript(text: String) {
+            liveOutput.append(text)
             // Show the words when the voice says them, not seconds earlier.
             val p = player
             val delayMs = if (p != null && voiceAllowed() && prefs.syncCaptions) {
@@ -409,6 +459,7 @@ class CaptionService : Service() {
         }
 
         override fun onTurnComplete() {
+            flushLiveSegment()
             liveOriginal.endSegment()
             captionTimer.post(0) { liveTranslated.endSegment() }
         }
@@ -443,6 +494,14 @@ class CaptionService : Service() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             )
         }
+
+        override fun onOpenTranscript() {
+            val id = transcriptId
+            val intent = if (id != null) TranscriptActivity.intent(this@CaptionService, id)
+            else Intent(this@CaptionService, TranscriptsActivity::class.java)
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            if (id == null) toast(getString(R.string.transcripts_off))
+        }
     }
 
     private fun togglePause() {
@@ -450,6 +509,7 @@ class CaptionService : Service() {
         if (paused) {
             stopSpeaking()
             live?.endAudioStream()
+            flushLiveSegment()
             overlay?.setStatus(getString(R.string.overlay_paused))
         } else {
             overlay?.setStatus(getString(R.string.listening))
@@ -575,6 +635,91 @@ class CaptionService : Service() {
 
     // endregion
 
+    // region Transcript
+
+    private fun startTranscript(language: SpeechLanguage) {
+        sessionStart = clock()
+        if (!prefs.saveTranscripts) return
+        val store = TranscriptStore(TranscriptActivity.storeDir(this)).also { transcriptStore = it }
+        val now = System.currentTimeMillis()
+        val id = store.newId(now)
+        val info = TranscriptInfo(
+            id = id,
+            startedAt = now,
+            engine = engine,
+            sourceTag = if (engine == TranslationEngine.LIVE) TranscriptInfo.AUTO else language.translateTag,
+            targetTag = target?.tag.orEmpty(),
+            topic = if (engine.needsApiKey) prefs.topic.trim() else "",
+        )
+        transcriptId = id
+        CaptionState.currentTranscript.value = id
+        transcriptIo.execute {
+            try {
+                transcriptWriter = store.create(info)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start the transcript", e)
+            }
+        }
+    }
+
+    /** Saves one finished line; times are [clock] values. */
+    private fun recordLine(original: String, translation: String?, start: Long, end: Long) {
+        if (transcriptId == null) return
+        val line = TranscriptLine(
+            startMs = (start - sessionStart).coerceAtLeast(0),
+            endMs = (end - sessionStart).coerceAtLeast(0),
+            original = original.trim(),
+            translation = translation?.trim()?.takeIf { it.isNotEmpty() },
+        )
+        if (line.original.isEmpty() && line.translation == null) return
+        transcriptIo.execute {
+            try {
+                transcriptWriter?.append(line)
+                CaptionState.transcriptVersion.value++
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not save a transcript line", e)
+            }
+        }
+    }
+
+    /** Gemini Live: what was said (and its translation) since the last pause becomes one line. */
+    private fun flushLiveSegment() {
+        if (liveInput.isBlank() && liveOutput.isBlank()) return
+        val now = clock()
+        recordLine(liveInput.toString(), liveOutput.toString(), liveSegmentStart ?: now, now)
+        liveInput.setLength(0)
+        liveOutput.setLength(0)
+        liveSegmentStart = null
+    }
+
+    private fun finishTranscript() {
+        val id = transcriptId ?: run {
+            transcriptIo.shutdown()
+            return
+        }
+        val store = transcriptStore
+        val endedAt = System.currentTimeMillis()
+        transcriptIo.execute {
+            try {
+                val writer = transcriptWriter
+                if (writer != null) {
+                    val empty = writer.lineCount == 0
+                    writer.finish(endedAt)
+                    if (empty) store?.delete(id) // Nothing was said: don't keep an empty transcript.
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not finish the transcript", e)
+            }
+            transcriptWriter = null
+            CaptionState.transcriptVersion.value++
+        }
+        transcriptIo.shutdown()
+        transcriptId = null // Nothing more is written after this.
+        CaptionState.currentTranscript.value = null
+    }
+
+    // endregion
+
     private fun render() {
         val overlay = overlay ?: return
         val none = CaptionText.EMPTY
@@ -651,6 +796,8 @@ class CaptionService : Service() {
     }
 
     override fun onDestroy() {
+        flushLiveSegment()
+        finishTranscript()
         scope.cancel()
         prefsWatcher?.let { prefs.unwatch(it) }
         live?.stop()
@@ -720,6 +867,9 @@ class CaptionService : Service() {
         private const val ACTION_UNLOCK = "com.livecaption.app.UNLOCK"
         private const val EXTRA_RESULT_CODE = "resultCode"
         private const val EXTRA_PROJECTION_DATA = "projectionData"
+
+        /** A Gemini Live transcript line is cut here if the speaker never pauses. */
+        private const val MAX_LIVE_SEGMENT_CHARS = 600
 
         /** Translated text appears at most this much later than it arrives (to match the voice). */
         private const val MAX_CAPTION_DELAY_MS = 4_000L

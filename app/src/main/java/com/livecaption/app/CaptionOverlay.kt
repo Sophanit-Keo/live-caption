@@ -51,6 +51,7 @@ class CaptionOverlay(
         fun onPauseToggle()
         fun onLockChanged(locked: Boolean)
         fun onOpenSettings()
+        fun onOpenTranscript()
     }
 
     private val windowManager = context.getSystemService(WindowManager::class.java)
@@ -77,6 +78,7 @@ class CaptionOverlay(
         addView(textButton("Aa", 16f, R.string.control_style) { prefs.subtitleStyle = prefs.subtitleStyle.next() })
         addView(originalButton)
         addView(divider())
+        addView(iconButton(R.drawable.ic_notes, R.string.control_transcript) { actions.onOpenTranscript() })
         addView(iconButton(R.drawable.ic_lock, R.string.control_lock) { setLocked(true) })
         addView(iconButton(R.drawable.ic_settings, R.string.control_settings) { actions.onOpenSettings() })
         addView(iconButton(R.drawable.ic_close, R.string.close) { actions.onClose() })

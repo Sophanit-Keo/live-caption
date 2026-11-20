@@ -324,6 +324,36 @@
                 android:text="@string/voice_boost" />
         </LinearLayout>
 
+        <!-- Transcripts -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/transcripts_section"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/saveTranscripts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/save_transcripts" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/save_transcripts_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <Button
+            android:id="@+id/openTranscripts"
+            style="@style/Widget.Material3.Button.TonalButton.Icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/open_transcripts"
+            app:icon="@drawable/ic_transcripts" />
+
         <!-- Subtitles -->
 
         <TextView

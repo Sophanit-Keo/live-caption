@@ -34,6 +34,16 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".TranscriptsActivity"
+            android:exported="false"
+            android:label="@string/transcripts_title" />
+
+        <activity
+            android:name=".TranscriptActivity"
+            android:exported="false"
+            android:label="@string/transcript_lines_heading" />
+
         <service
             android:name=".CaptionService"
             android:exported="false"

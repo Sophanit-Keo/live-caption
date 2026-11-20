@@ -95,6 +95,73 @@ class SubtitleScreenshotTest {
         save(content, "settings.png", backdrop = false)
     }
 
+    @Test
+    fun transcriptScreens() {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        val store = TranscriptStore(TranscriptActivity.storeDir(app))
+        store.deleteAll()
+        val day = java.util.Calendar.getInstance().apply { set(2026, 10, 20, 14, 3, 0) }.timeInMillis
+
+        val cooking = TranscriptInfo("20261120-140300", day, TranslationEngine.GEMINI, "en", "km", "a cooking show")
+        store.create(cooking).apply {
+            append(TranscriptLine(2_000, 6_000, "Today we're making fried rice at home.", "ថ្ងៃនេះ យើងនឹងធ្វើបាយឆានៅផ្ទះ។"))
+            append(TranscriptLine(9_000, 13_000, "The secret is to use rice from yesterday.", "អាថ៌កំបាំងគឺប្រើបាយពីម្សិលមិញ។"))
+            append(TranscriptLine(17_000, 21_000, "First, fry two eggs in a hot pan.", "ដំបូង ឆាពងមាន់ពីរគ្រាប់ក្នុងខ្ទះក្តៅ។"))
+            append(TranscriptLine(26_000, 29_000, "Then add the rice and the vegetables.", "បន្ទាប់មក ដាក់បាយ និងបន្លែ។"))
+            append(TranscriptLine(34_000, 38_000, "A little soy sauce, and it's ready.", "ដាក់ទឹកស៊ីអ៊ីវបន្តិច ហើយវារួចរាល់។"))
+            finish(day + 7 * 60_000)
+        }
+        store.saveSummary(
+            cooking.id,
+            TranscriptSummary(
+                day + 8 * 60_000, "Khmer",
+                "របៀបធ្វើបាយឆានៅផ្ទះ\n\n" +
+                    "អ្នកធ្វើម្ហូបបង្ហាញពីរបៀបធ្វើបាយឆាងាយៗ ដោយប្រើបាយចាស់ ពងមាន់ និងបន្លែ។\n\n" +
+                    "ចំណុចសំខាន់ៗ\n• ប្រើបាយដែលនៅសល់ពីម្សិលមិញ\n• ឆាពងមាន់មុន រួចដាក់បាយ\n• បន្ថែមទឹកស៊ីអ៊ីវ និងខ្ទឹមបារាំង",
+            ),
+        )
+        val news = TranscriptInfo("20261120-190500", day + 5 * 3_600_000, TranslationEngine.LIVE, TranscriptInfo.AUTO, "km")
+        store.create(news).apply {
+            append(TranscriptLine(1_000, 4_000, "Good evening, here is the news.", "សាយ័ណ្ហសួស្តី នេះជាព័ត៌មាន។"))
+        }.close()
+        val lecture = TranscriptInfo("20261119-090000", day - 29 * 3_600_000, TranslationEngine.OFFLINE, "en", "")
+        store.create(lecture).apply {
+            append(TranscriptLine(0, 5_000, "Welcome to today's lecture on physics.", null))
+            finish(lecture.startedAt + 52 * 60_000)
+        }
+        CaptionState.currentTranscript.value = news.id // shows the "Recording" badge
+
+        val list = Robolectric.buildActivity(TranscriptsActivity::class.java).setup().get()
+        settle()
+        saveWindow(list.window.decorView, "transcripts-list.png")
+
+        CaptionState.currentTranscript.value = null
+        val detail = Robolectric.buildActivity(TranscriptActivity::class.java, TranscriptActivity.intent(app, cooking.id)).setup().get()
+        settle()
+        saveWindow(detail.window.decorView, "transcript-detail.png")
+    }
+
+    /** Lets coroutines that load files on background threads finish and update the screen. */
+    private fun settle() {
+        repeat(30) {
+            Thread.sleep(40)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        }
+    }
+
+    private fun saveWindow(view: View, name: String) {
+        val heightPx = (852 * density).toInt()
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, widthPx, heightPx)
+        settle()
+        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bitmap))
+        FileOutputStream(File(outDir, name)).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
     private fun save(view: View, name: String, backdrop: Boolean) {
         view.measure(
             View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
@@ -126,5 +193,6 @@ class SubtitleScreenshotTest {
         override fun onPauseToggle() = Unit
         override fun onLockChanged(locked: Boolean) = Unit
         override fun onOpenSettings() = Unit
+        override fun onOpenTranscript() = Unit
     }
 }

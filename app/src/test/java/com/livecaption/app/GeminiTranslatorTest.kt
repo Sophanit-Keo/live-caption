@@ -120,13 +120,13 @@ class GeminiTranslatorTest {
     @Test
     fun parsesRepliesAndErrors() {
         val withThoughts = """{"candidates":[{"content":{"parts":[{"text":"plan","thought":true},{"text":" Bonjour "}]}}]}"""
-        assertEquals("Bonjour", GeminiTranslator.parseTranslation(withThoughts))
+        assertEquals("Bonjour", Gemini.parseText(withThoughts))
         val blocked = assertThrows(java.io.IOException::class.java) {
-            GeminiTranslator.parseTranslation("""{"promptFeedback":{"blockReason":"SAFETY"}}""")
+            Gemini.parseText("""{"promptFeedback":{"blockReason":"SAFETY"}}""")
         }
         assertTrue(blocked.message!!.contains("SAFETY"))
-        assertNull(GeminiTranslator.parseRetryDelayMs("""{"error":{"code":429}}"""))
-        assertNull(GeminiTranslator.parseError("not json"))
+        assertNull(Gemini.parseRetryDelayMs("""{"error":{"code":429}}"""))
+        assertNull(Gemini.parseError("not json"))
     }
 
     @Test

@@ -59,7 +59,7 @@ class SubtitleScreenshotTest {
             val view = SubtitleView(context)
             view.apply(SubtitleAppearance(style = style, textSizeSp = 20f, lines = 2))
             // The last words are still being spoken: drawn dimmer.
-            view.setText(CaptionText(khmer, khmer.lastIndexOf(' ') + 1), CaptionText(english))
+            view.setCaption(SentenceSnapshot(emptyList(), khmer, khmer.lastIndexOf(' ') + 1), SentenceSnapshot(emptyList(), english))
             view.setIndicator(if (style == SubtitleStyle.BOX) CaptionIndicator.SPEAKING else CaptionIndicator.LISTENING)
             column.addView(
                 view,
@@ -71,13 +71,58 @@ class SubtitleScreenshotTest {
     }
 
     @Test
+    fun sentenceModes() {
+        val column = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (16 * density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val khmerSentences = listOf("សូមស្វាគមន៍មកកាន់កម្មវិធីវិញ។", "ថ្ងៃនេះ យើងនឹងធ្វើបាយឆា។")
+        val khmerNow = "ដំបូង ដាក់ខ្ទះឲ្យក្តៅ"
+        val main = SentenceSnapshot(khmerSentences, khmerNow, khmerNow.indexOf(' ') + 1)
+        val original = SentenceSnapshot(listOf("Welcome back to the show.", "Today we are cooking fried rice."), "First, heat the pan")
+        val shown = mutableListOf<Pair<SubtitleView, SubtitleAppearance>>()
+        for ((label, sentences) in listOf("Sentence by sentence (3 lines)" to true, "Continuous (3 lines)" to false)) {
+            column.addView(
+                TextView(context).apply {
+                    text = label
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                },
+            )
+            val appearance = SubtitleAppearance(lines = 3, sentences = sentences)
+            val view = SubtitleView(context).apply {
+                apply(appearance)
+                setCaption(main, original)
+            }
+            shown += view to appearance
+            column.addView(
+                view,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = (20 * density).toInt() },
+            )
+        }
+        // Which sentences fit is decided once the width is known.
+        column.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        column.layout(0, 0, column.measuredWidth, column.measuredHeight)
+        shown.forEach { (view, appearance) -> view.apply(appearance) }
+        save(column, "sentence-modes.png", backdrop = true)
+    }
+
+    @Test
     fun overlayWithControls() {
         val prefs = Prefs(context)
         val overlay = CaptionOverlay(context, prefs, NoActions)
         overlay.show()
         overlay.setVoiceButton(VoiceButton.ON)
         overlay.setIndicator(CaptionIndicator.SPEAKING)
-        overlay.setCaption(CaptionText(khmer), CaptionText(english))
+        overlay.setCaption(
+            SentenceSnapshot(listOf("សួស្តីអ្នកទាំងអស់គ្នា។"), "តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?"),
+            SentenceSnapshot(listOf("Hello everyone."), "How are you today?"),
+        )
         CaptionOverlay::class.java.getDeclaredMethod("setControlsVisible", Boolean::class.java)
             .apply { isAccessible = true }
             .invoke(overlay, true)
@@ -163,11 +208,15 @@ class SubtitleScreenshotTest {
     }
 
     private fun save(view: View, name: String, backdrop: Boolean) {
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        repeat(2) {
+            // Twice: views that fit text to their width redraw after the first layout.
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+            settle()
+        }
         val margin = if (backdrop) (24 * density).toInt() else 0
         val bitmap = Bitmap.createBitmap(view.measuredWidth, view.measuredHeight + 2 * margin, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)

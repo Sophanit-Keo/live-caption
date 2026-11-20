@@ -88,14 +88,14 @@ class CaptionService : Service() {
     // Offline / Gemini text engines.
     private var translator: TextTranslator? = null
     private var pipeline: TranslationPipeline? = null
-    private val original = CaptionLine()
-    private val translated = CaptionLine()
+    private val original = SentenceBuffer(clock = clock)
+    private val translated = SentenceBuffer(clock = clock)
 
     // Gemini Live engine.
     private var http: OkHttpClient? = null
     private var live: LiveTranslator? = null
-    private val liveOriginal = RollingText(clock = clock)
-    private val liveTranslated = RollingText(clock = clock)
+    private val liveOriginal = SentenceBuffer(clock = clock)
+    private val liveTranslated = SentenceBuffer(clock = clock)
     private val captionTimer = CaptionScheduler(scope, clock)
 
     // Spoken translation.
@@ -300,7 +300,7 @@ class CaptionService : Service() {
     private fun onPartial(raw: String) {
         if (sentenceStart == null) sentenceStart = clock()
         val text = TextTidy.transcript(raw, sourceTag).capitalizeFirst()
-        original.setLive(text)
+        original.setPending(text)
         pipeline?.submitPartial(text)
         render()
     }
@@ -332,7 +332,7 @@ class CaptionService : Service() {
 
     private val pipelineListener = object : TranslationPipeline.Listener {
         override fun onPartialTranslation(text: String) {
-            translated.setLive(text)
+            translated.setPending(text)
             render()
         }
 
@@ -423,7 +423,7 @@ class CaptionService : Service() {
 
         override fun onInputTranscript(text: String, interim: Boolean) {
             if (interim) {
-                liveOriginal.setInterim(text)
+                liveOriginal.setPending(text)
             } else {
                 liveOriginal.append(text)
                 if (liveSegmentStart == null) liveSegmentStart = clock()
@@ -722,16 +722,15 @@ class CaptionService : Service() {
 
     private fun render() {
         val overlay = overlay ?: return
-        val none = CaptionText.EMPTY
         when {
             engine == TranslationEngine.LIVE -> {
-                val translation = liveTranslated.renderParts()
-                val source = liveOriginal.renderParts()
-                if (translation.isEmpty) overlay.setCaption(source, none)
-                else overlay.setCaption(translation, if (showOriginal) source else none)
+                val translation = liveTranslated.snapshot()
+                val source = liveOriginal.snapshot()
+                if (translation.isEmpty) overlay.setCaption(source, null)
+                else overlay.setCaption(translation, source.takeIf { showOriginal })
             }
-            translator == null -> overlay.setCaption(original.renderParts(), none)
-            else -> overlay.setCaption(translated.renderParts(), if (showOriginal) original.renderParts() else none)
+            translator == null -> overlay.setCaption(original.snapshot(), null)
+            else -> overlay.setCaption(translated.snapshot(), original.snapshot().takeIf { showOriginal })
         }
     }
 

@@ -9,6 +9,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
+import android.text.StaticLayout
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.TextUtils
@@ -49,22 +51,30 @@ data class SubtitleAppearance(
     val lines: Int = 2,
     val centered: Boolean = true,
     val showOriginal: Boolean = true,
+    /** Each sentence on its own line(s), newest at the bottom, instead of one running text. */
+    val sentences: Boolean = true,
 )
 
 /** The small dot in the corner of the captions. */
 enum class CaptionIndicator { LISTENING, SPEAKING, CONNECTING, PAUSED }
 
-/** Draws the part of a caption that may still change at reduced opacity, outline included. */
-private object PendingSpan : CharacterStyle(), UpdateAppearance {
+/** Draws text at reduced opacity, outline included. A span object can mark only one range. */
+private class DimSpan(private val factor: Float) : CharacterStyle(), UpdateAppearance {
     override fun updateDrawState(tp: TextPaint) {
-        tp.alpha = (tp.alpha * 0.62f).toInt()
+        tp.alpha = (tp.alpha * factor).toInt()
     }
 }
+
+/** Words that may still change. */
+private const val PENDING_ALPHA = 0.62f
+
+/** Earlier sentences, kept above the newest one. */
+private const val EARLIER_ALPHA = 0.72f
 
 fun CaptionText.styled(): CharSequence {
     if (pendingStart >= text.length) return text
     return SpannableString(text).apply {
-        setSpan(PendingSpan, pendingStart.coerceAtLeast(0), text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        setSpan(DimSpan(PENDING_ALPHA), pendingStart.coerceAtLeast(0), text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 }
 
@@ -164,6 +174,10 @@ class SubtitleView @JvmOverloads constructor(
     private var appearance = SubtitleAppearance()
     private var indicator = CaptionIndicator.LISTENING
     private var empty = true
+    private var idleAlphaTarget = 1f
+    private var shownMain = SentenceSnapshot.EMPTY
+    private var shownOriginal: SentenceSnapshot? = null
+    private var message: String? = null
 
     /** Widest the box gets, so lines stay easy to read on tablets and in landscape. */
     var maxBoxWidthPx = dp(720f).toInt()
@@ -217,8 +231,13 @@ class SubtitleView @JvmOverloads constructor(
         // Room on the left for the status dot, in every style.
         val horizontal = dp(if (a.style == SubtitleStyle.OUTLINE) 16f else 18f).toInt()
         textColumn.setPadding(horizontal, dp(8f).toInt(), horizontal, dp(10f).toInt())
-        secondary.visibility = if (a.showOriginal && secondary.text.isNotEmpty()) VISIBLE else GONE
-        updateIdleLook()
+        renderCaption()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Which sentences fit depends on the width: fit them again (after this layout pass).
+        if (w != oldw && appearance.sentences) post { renderCaption() }
     }
 
     private fun setTextColors(main: Int, original: Int, outline: Float) {
@@ -231,21 +250,81 @@ class SubtitleView @JvmOverloads constructor(
         primary.setShadowLayer(shadow, 0f, dp(1f), Color.argb(160, 0, 0, 0))
     }
 
-    /** Shows [main] (the translation, or the transcript) and [original] above it. */
-    fun setText(main: CaptionText, original: CaptionText) {
-        primary.text = main.styled()
-        secondary.text = original.styled()
-        secondary.visibility = if (appearance.showOriginal && !original.isEmpty) VISIBLE else GONE
-        empty = main.isEmpty && original.isEmpty
+    /** Shows [main] (the translation, or the transcript) and [original] in the smaller line above. */
+    fun setCaption(main: SentenceSnapshot, original: SentenceSnapshot?) {
+        message = null
+        shownMain = main
+        shownOriginal = original
+        renderCaption()
+    }
+
+    fun clearCaption() = setCaption(SentenceSnapshot.EMPTY, null)
+
+    /** A dim message in place of captions ("Listening…", "Paused"). */
+    fun setMessage(text: String) {
+        message = text
+        renderCaption()
+    }
+
+    private fun renderCaption() {
+        val msg = message
+        if (msg != null) {
+            primary.text = CaptionText(msg, 0).styled()
+            secondary.text = ""
+            secondary.visibility = GONE
+            empty = false
+            updateIdleLook()
+            return
+        }
+        val original = shownOriginal
+        if (appearance.sentences) {
+            primary.text = fitSentences(shownMain)
+            secondary.text = original?.newest()?.styled() ?: ""
+        } else {
+            primary.text = shownMain.continuous().styled()
+            secondary.text = original?.continuous()?.styled() ?: ""
+        }
+        secondary.visibility = if (appearance.showOriginal && secondary.text.isNotEmpty()) VISIBLE else GONE
+        empty = shownMain.isEmpty && (original == null || original.isEmpty)
         updateIdleLook()
     }
 
-    /** A dim message in place of captions ("Listening…", "Paused"). */
-    fun setMessage(message: String) {
-        setText(CaptionText(message, 0), CaptionText.EMPTY)
-        empty = false
-        updateIdleLook()
+    /**
+     * Sentence by sentence: the newest sentence, plus as many earlier ones (whole, each on its
+     * own line, a little dimmer) as fit in the chosen number of lines.
+     */
+    private fun fitSentences(s: SentenceSnapshot): CharSequence {
+        val items = ArrayList<CaptionText>()
+        s.done.takeLast(MAX_SENTENCES_SHOWN).forEach { items += CaptionText(it) }
+        if (s.current.isNotEmpty()) items += CaptionText(s.current, s.pendingStart)
+        if (items.isEmpty()) return ""
+        val width = primary.width - primary.totalPaddingLeft - primary.totalPaddingRight
+        val from = if (width <= 0) items.size - 1 else Sentences.fitNewest(items.size, appearance.lines) { start ->
+            lineCount(items.subList(start, items.size).joinToString("\n") { it.text }, width)
+        }
+        val out = SpannableStringBuilder()
+        for (i in from until items.size) {
+            if (out.isNotEmpty()) out.append('\n')
+            out.append(items[i].text)
+        }
+        val newest = items.last()
+        val newestStart = out.length - newest.text.length
+        if (newestStart > 0) out.setSpan(DimSpan(EARLIER_ALPHA), 0, newestStart, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (newest.pendingStart < newest.text.length) {
+            out.setSpan(DimSpan(PENDING_ALPHA), newestStart + newest.pendingStart.coerceAtLeast(0), out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return out
     }
+
+    /** Lines [text] takes in the translation line at [width], laid out the way the view does. */
+    private fun lineCount(text: String, width: Int): Int =
+        StaticLayout.Builder.obtain(text, 0, text.length, primary.paint, width)
+            .setLineSpacing(primary.lineSpacingExtra, primary.lineSpacingMultiplier)
+            .setIncludePad(primary.includeFontPadding)
+            .setBreakStrategy(primary.breakStrategy)
+            .setHyphenationFrequency(primary.hyphenationFrequency)
+            .build()
+            .lineCount
 
     fun setIndicator(state: CaptionIndicator) {
         indicator = state
@@ -272,7 +351,13 @@ class SubtitleView @JvmOverloads constructor(
     /** Without text the box fades back, but stays findable (and tappable). */
     private fun updateIdleLook() {
         val target = if (empty) 0.4f else 1f
-        if (textColumn.alpha != target) textColumn.animate().alpha(target).setDuration(220).start()
+        // Compare with where the fade is heading, not where it is now: text that arrives while
+        // the box is still fading out must turn the fade around.
+        if (idleAlphaTarget != target) {
+            idleAlphaTarget = target
+            textColumn.animate().cancel()
+            textColumn.animate().alpha(target).setDuration(220).start()
+        }
         boxBackground.alpha = if (empty && appearance.style != SubtitleStyle.CONTRAST) 110 else 255
     }
 
@@ -282,5 +367,10 @@ class SubtitleView @JvmOverloads constructor(
     }
 
     private fun dp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics)
+
+    private companion object {
+        /** Earlier sentences considered for the box; more never fit anyway. */
+        const val MAX_SENTENCES_SHOWN = 4
+    }
     private fun sp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 }

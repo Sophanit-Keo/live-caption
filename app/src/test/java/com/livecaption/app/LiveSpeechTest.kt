@@ -39,25 +39,30 @@ class LiveSpeechTest {
 
     @Test
     fun pendingWordsAreMarkedForDimming() {
-        val line = CaptionLine()
-        line.commit("Hello there.")
-        line.setLive("How are")
-        val parts = line.renderParts()
+        var now = 0L
+        val buffer = SentenceBuffer { now }
+        buffer.commit("Hello there.")
+        buffer.setPending("How are")
+        val parts = buffer.snapshot().continuous()
         assertEquals("Hello there. How are", parts.text)
         assertEquals("How are", parts.text.substring(parts.pendingStart))
+        assertEquals("How are", buffer.snapshot().newest().text)
+        assertEquals(0, buffer.snapshot().newest().pendingStart)
 
-        line.commit("How are you?")
-        assertEquals(line.renderParts().text.length, line.renderParts().pendingStart)
+        buffer.commit("How are you?")
+        val done = buffer.snapshot().continuous()
+        assertEquals(done.text.length, done.pendingStart)
 
-        var now = 0L
-        val rolling = RollingText { now }
+        val rolling = SentenceBuffer { now }
         rolling.append("Bonjour")
-        rolling.setInterim("tout le")
-        val r = rolling.renderParts()
+        rolling.setPending("tout le")
+        val r = rolling.snapshot().continuous()
         assertEquals("Bonjour tout le", r.text)
         assertEquals("tout le", r.text.substring(r.pendingStart))
         rolling.append(" tout le monde")
-        assertEquals(rolling.renderParts().text.length, rolling.renderParts().pendingStart)
+        val after = rolling.snapshot()
+        assertEquals("Bonjour tout le monde", after.current)
+        assertEquals(after.current.length, after.pendingStart)
     }
 
     @Test

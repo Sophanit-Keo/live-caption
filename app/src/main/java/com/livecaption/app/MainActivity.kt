@@ -175,6 +175,7 @@ class MainActivity : AppCompatActivity() {
             if (fromUser) setAppearance { prefs.captionLines = value.toInt() }
         }
         showOriginal.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.showOriginal = checked } }
+        sentenceMode.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.sentenceMode = checked } }
         syncCaptions.setOnCheckedChangeListener { _, checked -> prefs.syncCaptions = checked }
         saveTranscripts.isChecked = prefs.saveTranscripts
         saveTranscripts.setOnCheckedChangeListener { _, checked -> prefs.saveTranscripts = checked }
@@ -203,6 +204,7 @@ class MainActivity : AppCompatActivity() {
         boxOpacity.value = (Math.round(prefs.boxOpacity * 20) / 20f).coerceIn(boxOpacity.valueFrom, boxOpacity.valueTo)
         captionLines.value = prefs.captionLines.toFloat().coerceIn(captionLines.valueFrom, captionLines.valueTo)
         showOriginal.isChecked = prefs.showOriginal
+        sentenceMode.isChecked = prefs.sentenceMode
         syncCaptions.isChecked = prefs.syncCaptions
         updatePreview()
     }
@@ -215,13 +217,11 @@ class MainActivity : AppCompatActivity() {
         val boxStyle = appearance.style == SubtitleStyle.BOX
         boxOpacity.isEnabled = boxStyle
         backgroundLabel.alpha = if (boxStyle) 1f else 0.5f
+        // Two sentences, so both subtitle layouts can be seen.
         val target = selectedTarget()
-        val english = getString(R.string.preview_original)
-        if (target == null) {
-            preview.setText(CaptionText(english), CaptionText.EMPTY)
-        } else {
-            preview.setText(CaptionText(PREVIEW_SAMPLES[target.tag] ?: english), CaptionText(english))
-        }
+        val english = SentenceSnapshot(listOf(getString(R.string.preview_first)), getString(R.string.preview_second))
+        val sample = target?.let { PREVIEW_SAMPLES[it.tag] }?.let { (first, second) -> SentenceSnapshot(listOf(first), second) }
+        if (target == null) preview.setCaption(english, null) else preview.setCaption(sample ?: english, english)
     }
 
     private fun onEngineChanged() = with(binding) {
@@ -431,18 +431,18 @@ class MainActivity : AppCompatActivity() {
             "th" to "สวัสดี! นี่คือเสียงแปลของคุณ",
         )
 
-        /** "Hello, how are you today?" for the subtitle preview. */
+        /** "Hello everyone." and "How are you today?" for the subtitle preview. */
         val PREVIEW_SAMPLES = mapOf(
-            "km" to "សួស្តី តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?",
-            "en" to "Hello, how are you today?",
-            "es" to "Hola, ¿cómo estás hoy?",
-            "fr" to "Bonjour, comment allez-vous aujourd'hui ?",
-            "de" to "Hallo, wie geht es dir heute?",
-            "zh" to "你好，你今天好吗？",
-            "ja" to "こんにちは、今日はお元気ですか？",
-            "ko" to "안녕하세요, 오늘 어떻게 지내세요?",
-            "vi" to "Xin chào, hôm nay bạn thế nào?",
-            "th" to "สวัสดี วันนี้คุณเป็นอย่างไรบ้าง",
+            "km" to ("សួស្តីអ្នកទាំងអស់គ្នា។" to "តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?"),
+            "en" to ("Hello everyone." to "How are you today?"),
+            "es" to ("Hola a todos." to "¿Cómo están hoy?"),
+            "fr" to ("Bonjour à tous." to "Comment allez-vous aujourd'hui ?"),
+            "de" to ("Hallo zusammen." to "Wie geht es euch heute?"),
+            "zh" to ("大家好。" to "你们今天好吗？"),
+            "ja" to ("皆さん、こんにちは。" to "今日はお元気ですか？"),
+            "ko" to ("안녕하세요, 여러분." to "오늘 어떻게 지내세요?"),
+            "vi" to ("Xin chào mọi người." to "Hôm nay các bạn thế nào?"),
+            "th" to ("สวัสดีทุกคน" to "วันนี้เป็นอย่างไรบ้าง"),
         )
 
         /** Falls back to the language's own name, spoken in that language. */

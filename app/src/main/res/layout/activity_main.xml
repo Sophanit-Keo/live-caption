@@ -514,6 +514,19 @@
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
         <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/sentenceMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/sentence_mode" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/sentence_mode_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/showOriginal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

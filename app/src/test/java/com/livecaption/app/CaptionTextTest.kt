@@ -11,34 +11,17 @@ import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-class CaptionLineTest {
+class CaptionTextTest {
 
     @Test
-    fun liveTextFollowsLastFinishedSentence() {
-        val line = CaptionLine()
-        line.setLive("hello")
-        assertEquals("hello", line.render())
-        line.commit("hello world")
-        assertEquals("hello world", line.render())
-        line.setLive("how are")
-        assertEquals("hello world how are", line.render())
-        line.commit("how are you")
-        assertEquals("how are you", line.render())
-    }
-
-    @Test
-    fun longTextKeepsTheTailAtAWordBoundary() {
-        val line = CaptionLine(maxChars = 12)
-        line.commit("alpha bravo charlie delta")
-        assertEquals("…delta", line.render())
+    fun continuousTextKeepsTheTailAtAWordBoundary() {
+        assertEquals("…delta", SentenceSnapshot(listOf("alpha bravo charlie delta"), "").continuous(maxChars = 12).text)
     }
 
     @Test
     fun khmerTextIsNeverCutInsideACharacterCluster() {
         // No spaces, and every syllable is consonant + vowel sign: a cut must land between syllables.
-        val line = CaptionLine(maxChars = 7)
-        line.commit("កាកាកាកាកា")
-        assertEquals("…កាកាកា", line.render())
+        assertEquals("…កាកាកា", displayTail("កាកាកាកាកា", 7))
     }
 
     @Test

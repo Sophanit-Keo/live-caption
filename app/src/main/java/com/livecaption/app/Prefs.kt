@@ -71,12 +71,18 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("centered", true)
         set(v) = sp.edit { putBoolean("centered", v) }
 
+    /** Each sentence on its own line(s), instead of one running text. */
+    var sentenceMode: Boolean
+        get() = sp.getBoolean("sentenceMode", true)
+        set(v) = sp.edit { putBoolean("sentenceMode", v) }
+
     /** Distance of the caption box from the bottom of the screen, in pixels; -1 = default. */
     var overlayY: Int
         get() = sp.getInt("overlayY", -1)
         set(v) = sp.edit { putInt("overlayY", v) }
 
-    fun appearance() = SubtitleAppearance(subtitleStyle, textSizeSp, boxOpacity, captionLines, centered, showOriginal)
+    fun appearance() =
+        SubtitleAppearance(subtitleStyle, textSizeSp, boxOpacity, captionLines, centered, showOriginal, sentenceMode)
 
     /** Gemini Live: show translated text when its voice says it, instead of as soon as it arrives. */
     var syncCaptions: Boolean
@@ -128,6 +134,7 @@ class Prefs(context: Context) {
         const val MAX_TEXT_SP = 40f
 
         /** Settings that change how captions look; applied to running captions at once. */
-        val APPEARANCE_KEYS = setOf("textSizeSp", "subtitleStyle", "boxOpacity", "captionLines", "centered", "showOriginal")
+        val APPEARANCE_KEYS =
+            setOf("textSizeSp", "subtitleStyle", "boxOpacity", "captionLines", "centered", "showOriginal", "sentenceMode")
     }
 }

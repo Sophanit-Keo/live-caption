@@ -88,28 +88,26 @@ class TextAndVoiceTest {
     }
 
     @Test
-    fun rollingTextJoinsFragmentsAndStartsFreshAfterSilence() {
+    fun streamingTextJoinsFragmentsAndStartsFreshAfterSilence() {
         var now = 0L
-        val t = RollingText(maxChars = 40, resetAfterMs = 8_000) { now }
+        val t = SentenceBuffer(resetAfterMs = 8_000) { now }
         t.append("Hello")
         t.append(" world")
-        assertEquals("Hello world", t.render())
-        t.setInterim("and mo")
-        assertEquals("Hello world and mo", t.render())
+        assertEquals("Hello world", t.snapshot().current)
+        t.setPending("and mo")
+        assertEquals("Hello world and mo", t.snapshot().current)
         t.append(" and more")
-        assertEquals("Hello world and more", t.render())
+        assertEquals("Hello world and more", t.snapshot().current)
 
         now = 20_000
         t.append("Next")
-        assertEquals("Next", t.render())
+        assertEquals(SentenceSnapshot(emptyList(), "Next"), t.snapshot())
 
+        // A pause closes the sentence; the next words start a new one.
         t.endSegment()
         t.append("សួស្តី")
-        assertEquals("Next សួស្តី", t.render())
-
-        t.append(" " + "word ".repeat(20))
-        assertTrue(t.render().startsWith("…"))
-        assertTrue(t.render().length <= 41)
+        assertEquals(listOf("Next"), t.snapshot().done)
+        assertEquals("សួស្តី", t.snapshot().current)
     }
 
     @Test

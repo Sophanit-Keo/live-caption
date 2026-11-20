@@ -55,8 +55,11 @@
     <string name="caption_alignment">Alignment</string>
     <string name="align_center">Center</string>
     <string name="align_left">Left</string>
+    <string name="sentence_mode">Sentence by sentence</string>
+    <string name="sentence_mode_hint">Each sentence starts on its own line, and the newest one is always shown whole at the bottom. Earlier sentences stay above it while they fit. Turn off for one running line of text.</string>
     <string name="sync_captions">Show Gemini Live\'s text as its voice speaks it</string>
-    <string name="preview_original">Hello, how are you today?</string>
+    <string name="preview_first">Hello everyone.</string>
+    <string name="preview_second">How are you today?</string>
     <string name="preview_description">Preview of the subtitles</string>
     <string name="show_original">Show original text above translation</string>
     <string name="text_size">Caption text size</string>

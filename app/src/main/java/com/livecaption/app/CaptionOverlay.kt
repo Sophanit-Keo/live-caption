@@ -56,7 +56,7 @@ class CaptionOverlay(
 
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
-    private val clearIdle = Runnable { subtitles.setText(CaptionText.EMPTY, CaptionText.EMPTY) }
+    private val clearIdle = Runnable { subtitles.clearCaption() }
     private val hideControls = Runnable { setControlsVisible(false) }
 
     private val subtitles = SubtitleView(context)
@@ -143,9 +143,9 @@ class CaptionOverlay(
         subtitles.setMessage(message)
     }
 
-    /** Shows captions; [original] is the smaller line above ([CaptionText.EMPTY] to hide). */
-    fun setCaption(main: CaptionText, original: CaptionText) {
-        subtitles.setText(main, original)
+    /** Shows captions; [original] is the smaller line above (null to hide). */
+    fun setCaption(main: SentenceSnapshot, original: SentenceSnapshot?) {
+        subtitles.setCaption(main, original)
         // Clear stale subtitles once speech has stopped for a while.
         handler.removeCallbacks(clearIdle)
         handler.postDelayed(clearIdle, IDLE_CLEAR_MS)

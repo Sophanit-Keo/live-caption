@@ -12,8 +12,8 @@ android {
         // 29 = Android 10, the first release that lets apps capture other apps' audio.
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         // Phone ABIs only; add "x86_64" to run on an emulator.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

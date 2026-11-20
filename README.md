@@ -48,6 +48,16 @@ Tap the floating subtitles for a toolbar; it hides again after a few seconds:
 | ⚙ | Open Live Caption settings |
 | ✕ | Stop captions |
 
+- **Sentence by sentence** (on by default): each sentence starts on its own line. The newest one
+  is always shown whole at the bottom, and earlier sentences stay above it, slightly dimmed,
+  while they fit in the chosen number of lines. When a new sentence starts, the oldest one makes
+  room instead of the text running together and being cut mid-sentence. Sentence ends are found
+  in many scripts: `.` `?` `!` and Khmer `។`, Chinese and Japanese `。`, Hindi `।` and others.
+  Numbers like "3.5" and abbreviations like "Mr." are not taken as ends. Turn it off in settings
+  for one running line of text.
+
+  ![Sentence by sentence vs continuous](docs/screenshots/sentence-modes.png)
+
 - **Moving:** drag the subtitles up or down; the position is remembered.
 - **Readability:** a fixed number of lines (1–4) keeps the box from jumping, and the newest
   words stay visible at the bottom.
@@ -179,6 +189,7 @@ and Live Translate tests run against local fake servers; they do not call Google
 | `CaptionOverlay` | Floating, draggable subtitle window and its toolbar (pause, voice, size, style, lock…) |
 | `SubtitleView` | The caption box: styles, outlined text, newest lines at the bottom, status dot |
 | `CaptionScheduler` | Shows Gemini Live's text when its voice speaks it, in order |
+| `Sentences` | Finds sentence ends; `SentenceBuffer` holds caption text as sentences |
 | `TranslationPipeline` | What to translate when: merging, context, rate-limit back-off |
 | `TextTranslator` | ML Kit, Gemini and offline-Khmer translators |
 | `LiveTranslate` | Gemini Live Translate WebSocket session and reconnecting manager |

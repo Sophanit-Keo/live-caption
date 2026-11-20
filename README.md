@@ -228,7 +228,6 @@ real voiceprints when `SPEAKERS_DATA` points at a file of exported voiceprints
 | `CaptionScheduler` | Shows Gemini Live's text when its voice speaks it, in order |
 | `Sentences` | Finds sentence ends; `SentenceBuffer` holds caption text as sentences |
 | `Speakers` | Pitch tracking, man/woman/child, and telling speakers apart (`SpeakerTracker`) |
-| `VoiceprintStats` | The average voiceprint that `SpeakerTracker` takes away before comparing voices |
 | `TranslationPipeline` | What to translate when: merging, context, rate-limit back-off |
 | `TextTranslator` | ML Kit, Gemini and offline-Khmer translators |
 | `LiveTranslate` | Gemini Live Translate WebSocket session and reconnecting manager |

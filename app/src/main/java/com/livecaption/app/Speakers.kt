@@ -184,7 +184,7 @@ class SpeakerTracker(
                 SpeakerInfo(null, sentenceVoice)
             }
         }
-        val v = prepare(vector)
+        val v = normalized(vector)
         var best: Speaker? = null
         var bestScore = -1f
         for (s in speakers) {
@@ -258,17 +258,6 @@ class SpeakerTracker(
         const val MIN_FRAMES = 100 // about one second of speech
         const val CLEARLY_NEW_BELOW = 0.2f
         private const val MAX_WEIGHT = 20
-
-        /**
-         * A voiceprint ready to compare: the average voice ([VoiceprintStats]) taken away, each
-         * number evened out by its usual spread, and scaled to length 1.
-         */
-        fun prepare(vector: FloatArray): FloatArray {
-            val mean = VoiceprintStats.MEAN
-            val spread = VoiceprintStats.SPREAD
-            if (vector.size != mean.size) return normalized(vector)
-            return normalized(FloatArray(vector.size) { (vector[it] - mean[it]) / spread[it] })
-        }
 
         fun normalized(v: FloatArray): FloatArray {
             var sum = 0f

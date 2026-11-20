@@ -107,18 +107,6 @@ class SpeakersTest {
         assertEquals(3, t.assign(unit(0f, 0f, 1f), 400, 118f).id)
     }
 
-    @Test
-    fun voiceprintsAreCentredBeforeComparing() {
-        val mean = VoiceprintStats.MEAN
-        assertEquals(mean.size, VoiceprintStats.SPREAD.size)
-        assertTrue(VoiceprintStats.SPREAD.all { it > 0f })
-        // The average voice itself carries nothing that tells people apart.
-        val v = SpeakerTracker.prepare(FloatArray(mean.size) { mean[it] + if (it == 0) VoiceprintStats.SPREAD[0] else 0f })
-        assertEquals(1f, v[0], 1e-4f)
-        // Voiceprints of another size (not from the shipped speaker model) are only normalised.
-        assertEquals(1f, SpeakerTracker.prepare(floatArrayOf(3f, 4f)).let { it[0] * it[0] + it[1] * it[1] }, 1e-5f)
-    }
-
     /**
      * Real Khmer recordings with known speaker gender (Google FLEURS), as raw 16 kHz PCM with a
      * labels file. Runs only when VOICE_DATA points at that folder.
@@ -169,8 +157,8 @@ class SpeakersTest {
             Seg(spk.toInt(), pitch.toFloat(), frames.toInt(), vec.trim().split(' ').map { it.toFloat() }.toFloatArray())
         }
         val settings = if (System.getProperty("speakers.sweep") == "1") {
-            listOf(0.25f, 0.3f, 0.35f, 0.4f).flatMap { t ->
-                listOf(100, 200).flatMap { m -> listOf(0f, 0.1f, 1f).map { n -> Triple(t, m, n) } }
+            listOf(0.4f, 0.45f, 0.5f, 0.55f).flatMap { t ->
+                listOf(100, 200).flatMap { m -> listOf(0.15f, 0.2f, 0.25f, 1f).map { n -> Triple(t, m, n) } }
             }
         } else {
             listOf(Triple(SpeakerTracker.DEFAULT_THRESHOLD, SpeakerTracker.MIN_FRAMES, SpeakerTracker.CLEARLY_NEW_BELOW))

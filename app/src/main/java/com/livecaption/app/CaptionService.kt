@@ -48,6 +48,7 @@ import org.vosk.LibVosk
 import org.vosk.LogLevel
 import org.vosk.Model
 import org.vosk.Recognizer
+import org.vosk.SpeakerModel
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -116,7 +117,11 @@ class CaptionService : Service() {
     private var sentenceStart: Long? = null
 
     /** Start/end times of finished sentences still being translated, oldest first. */
-    private val sentenceTimes = ArrayDeque<LongArray>()
+    private val sentenceTimes = ArrayDeque<PendingSentence>()
+
+    /** The voice type heard so far in the sentence still being spoken. */
+    private var partialSpeaker: SpeakerInfo? = null
+    private val livePitch = PitchTracker()
     private val liveInput = StringBuilder()
     private val liveOutput = StringBuilder()
     private var liveSegmentStart: Long? = null
@@ -229,6 +234,7 @@ class CaptionService : Service() {
         status(getString(R.string.status_loading_speech))
         LibVosk.setLogLevel(LogLevel.WARNINGS)
         val model = withContext(Dispatchers.IO) { Model(modelDir.absolutePath) }
+        val speakerModel = if (prefs.identifySpeakers) loadSpeakerModel() else null
 
         try {
             val t = target
@@ -249,15 +255,51 @@ class CaptionService : Service() {
                 if (voiceOn) ensureTts()
             }
             running()
-            recognize(record, model)
+            recognize(record, model, speakerModel)
         } finally {
+            speakerModel?.close()
             model.close()
         }
     }
 
+    /** Vosk's speaker model, to tell speakers apart; captions work without it if it can't load. */
+    private suspend fun loadSpeakerModel(): SpeakerModel? =
+        try {
+            val dir = ModelManager.ensureSpeakerModel(this) { percent ->
+                status(
+                    if (percent >= 0) getString(R.string.status_downloading_speakers, percent)
+                    else getString(R.string.status_unpacking_speech),
+                )
+            }
+            withContext(Dispatchers.IO) { SpeakerModel(dir.absolutePath) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Speaker model unavailable", e)
+            toast(getString(R.string.speakers_unavailable))
+            null
+        }
+
     /** Blocking audio → text loop; runs until the service is cancelled. */
-    private suspend fun recognize(record: AudioRecord, model: Model) = withContext(Dispatchers.Default) {
-        val recognizer = Recognizer(model, SAMPLE_RATE.toFloat())
+    private suspend fun recognize(record: AudioRecord, model: Model, speakerModel: SpeakerModel?) = withContext(Dispatchers.Default) {
+        val recognizer = if (speakerModel != null) Recognizer(model, SAMPLE_RATE.toFloat(), speakerModel)
+        else Recognizer(model, SAMPLE_RATE.toFloat())
+        val speakers = SpeakerTracker()
+        val pitch = PitchTracker()
+
+        /**
+         * A finished result's text and who said it, from its voiceprint (if any) and the pitch
+         * heard since the last result. Null for a result without words (noise), whose
+         * voiceprint isn't worth learning from.
+         */
+        fun finished(json: String): Pair<String, SpeakerInfo>? {
+            val median = pitch.take()
+            val text = parseVoskResult(json, "text")
+            if (text.isEmpty()) return null
+            if (speakerModel == null) return text to SpeakerInfo(null, VoiceType.fromPitch(median))
+            val (vector, frames) = parseVoiceprint(json)
+            return text to speakers.assign(vector, frames, median)
+        }
         try {
             record.startRecording()
             val buffer = ShortArray(SAMPLE_RATE / 5) // 200 ms
@@ -273,21 +315,26 @@ class CaptionService : Service() {
                         // Finish the sentence in progress, so it is translated rather than lost.
                         wasPaused = true
                         lastPartial = ""
-                        val text = parseVoskResult(recognizer.finalResult, "text")
-                        if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text) }
+                        finished(recognizer.finalResult)?.let { (text, speaker) ->
+                            withContext(Dispatchers.Main) { onFinal(text, speaker) }
+                        }
                     }
                     continue
                 }
                 wasPaused = false
+                if (!muteInput) pitch.feed(buffer, n)
                 if (recognizer.acceptWaveForm(if (muteInput) silence else buffer, n)) {
                     lastPartial = ""
-                    val text = parseVoskResult(recognizer.result, "text")
-                    if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text) }
+                    finished(recognizer.result)?.let { (text, speaker) ->
+                        withContext(Dispatchers.Main) { onFinal(text, speaker) }
+                    }
                 } else {
                     val partial = parseVoskResult(recognizer.partialResult, "partial")
                     if (partial.isNotEmpty() && partial != lastPartial) {
                         lastPartial = partial
-                        withContext(Dispatchers.Main) { onPartial(partial) }
+                        // The voice type so far; the speaker number comes with the finished sentence.
+                        val voice = VoiceType.fromPitch(pitch.median())
+                        withContext(Dispatchers.Main) { onPartial(partial, voice) }
                     }
                 }
             }
@@ -297,56 +344,62 @@ class CaptionService : Service() {
         }
     }
 
-    private fun onPartial(raw: String) {
+    private fun onPartial(raw: String, voice: VoiceType) {
         if (sentenceStart == null) sentenceStart = clock()
         val text = TextTidy.transcript(raw, sourceTag).capitalizeFirst()
-        original.setPending(text)
+        partialSpeaker = SpeakerInfo(null, voice).takeIf { voice != VoiceType.UNKNOWN }
+        original.setPending(text, partialSpeaker)
         pipeline?.submitPartial(text)
         render()
     }
 
-    private fun onFinal(raw: String) {
+    private fun onFinal(raw: String, speaker: SpeakerInfo) {
         val sentence = TextTidy.sentence(raw, sourceTag)
         val end = clock()
         val start = sentenceStart ?: (end - 1_000)
         sentenceStart = null
-        original.commit(sentence)
+        partialSpeaker = null
+        original.commit(sentence, speaker)
         val p = pipeline
         if (p == null) {
-            recordLine(sentence, null, start, end)
+            recordLine(sentence, null, start, end, speaker)
         } else {
-            sentenceTimes.addLast(longArrayOf(start, end))
+            sentenceTimes.addLast(PendingSentence(start, end, speaker))
             p.submitFinal(sentence)
         }
         render()
     }
 
-    /** Times of the next [count] translated sentences (merged translations cover several). */
-    private fun takeSentenceTimes(count: Int): LongArray {
+    /** A finished sentence waiting for its translation. */
+    private class PendingSentence(val start: Long, val end: Long, val speaker: SpeakerInfo)
+
+    /** Times (and speaker) of the next [count] translated sentences (merged translations cover several). */
+    private fun takeSentenceTimes(count: Int): PendingSentence {
         val now = clock()
-        val first = sentenceTimes.removeFirstOrNull() ?: return longArrayOf(now, now)
-        var end = first[1]
-        repeat(count - 1) { sentenceTimes.removeFirstOrNull()?.let { end = it[1] } }
-        return longArrayOf(first[0], end)
+        val first = sentenceTimes.removeFirstOrNull() ?: return PendingSentence(now, now, SpeakerInfo.UNKNOWN)
+        var last = first
+        repeat(count - 1) { sentenceTimes.removeFirstOrNull()?.let { last = it } }
+        return PendingSentence(first.start, last.end, last.speaker)
     }
 
     private val pipelineListener = object : TranslationPipeline.Listener {
         override fun onPartialTranslation(text: String) {
-            translated.setPending(text)
+            // In-progress translations are of the sentence still being spoken.
+            translated.setPending(text, partialSpeaker)
             render()
         }
 
         override fun onFinalTranslation(line: TranslatedLine) {
-            translated.commit(line.translation)
+            val sentence = takeSentenceTimes(line.parts)
+            translated.commit(line.translation, sentence.speaker)
             render()
-            val times = takeSentenceTimes(line.parts)
-            recordLine(line.source, line.translation, times[0], times[1])
-            if (voiceAllowed() && !paused) tts?.speak(line.translation)
+            recordLine(line.source, line.translation, sentence.start, sentence.end, sentence.speaker)
+            if (voiceAllowed() && !paused) tts?.speak(line.translation, sentence.speaker.voice)
         }
 
         override fun onUntranslated(text: String) {
-            val times = takeSentenceTimes(1)
-            recordLine(text, null, times[0], times[1])
+            val sentence = takeSentenceTimes(1)
+            recordLine(text, null, sentence.start, sentence.end, sentence.speaker)
         }
 
         override fun onRateLimited(retryAfterMs: Long) {
@@ -401,7 +454,10 @@ class CaptionService : Service() {
                 if (n < 0) throw IOException("Audio capture stopped (error $n)")
                 if (n == 0 || paused) continue
                 val bytes = ByteArray(n * 2)
-                if (!muteInput) ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(samples, 0, n)
+                if (!muteInput) {
+                    ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(samples, 0, n)
+                    livePitch.feed(samples, n)
+                }
                 translator.sendAudio(bytes)
             }
         } finally {
@@ -422,10 +478,11 @@ class CaptionService : Service() {
         }
 
         override fun onInputTranscript(text: String, interim: Boolean) {
+            val speaker = liveSpeaker()
             if (interim) {
-                liveOriginal.setPending(text)
+                liveOriginal.setPending(text, speaker)
             } else {
-                liveOriginal.append(text)
+                liveOriginal.append(text, speaker)
                 if (liveSegmentStart == null) liveSegmentStart = clock()
                 liveInput.append(text)
                 if (liveInput.length > MAX_LIVE_SEGMENT_CHARS) flushLiveSegment()
@@ -435,6 +492,7 @@ class CaptionService : Service() {
 
         override fun onOutputTranscript(text: String) {
             liveOutput.append(text)
+            val speaker = liveSpeaker()
             // Show the words when the voice says them, not seconds earlier.
             val p = player
             val delayMs = if (p != null && voiceAllowed() && prefs.syncCaptions) {
@@ -443,7 +501,7 @@ class CaptionService : Service() {
                 0L
             }
             captionTimer.post(delayMs) {
-                liveTranslated.append(text)
+                liveTranslated.append(text, speaker)
                 render()
             }
         }
@@ -528,6 +586,7 @@ class CaptionService : Service() {
                 render()
             }
             "voiceRate" -> tts?.baseRate = prefs.voiceRate
+            "matchVoice" -> tts?.matchVoice = prefs.matchVoice
             "duckOthers" -> focus?.duckOthers = prefs.duckOthers
             "voiceBoost" -> player?.setBoost(prefs.voiceBoost)
             "allowSpeaker" -> {
@@ -610,6 +669,7 @@ class CaptionService : Service() {
         ttsLookup = scope.launch {
             when (val result = PhoneVoices.find(this@CaptionService, t.voiceLocale)) {
                 is VoiceLookup.Ready -> tts = TtsVoice(result.tts, prefs.voiceRate, ::onSpeakingChanged)
+                    .also { it.matchVoice = prefs.matchVoice }
                 is VoiceLookup.NeedsDownload -> toast(getString(R.string.voice_needs_download, t.displayName()))
                 VoiceLookup.Unsupported -> toast(getString(R.string.voice_unsupported, t.displayName()))
             }
@@ -663,13 +723,15 @@ class CaptionService : Service() {
     }
 
     /** Saves one finished line; times are [clock] values. */
-    private fun recordLine(original: String, translation: String?, start: Long, end: Long) {
+    private fun recordLine(original: String, translation: String?, start: Long, end: Long, speaker: SpeakerInfo?) {
         if (transcriptId == null) return
         val line = TranscriptLine(
             startMs = (start - sessionStart).coerceAtLeast(0),
             endMs = (end - sessionStart).coerceAtLeast(0),
             original = original.trim(),
             translation = translation?.trim()?.takeIf { it.isNotEmpty() },
+            speaker = speaker?.id,
+            voice = speaker?.voice ?: VoiceType.UNKNOWN,
         )
         if (line.original.isEmpty() && line.translation == null) return
         transcriptIo.execute {
@@ -682,11 +744,19 @@ class CaptionService : Service() {
         }
     }
 
+    /**
+     * Gemini Live: the voice type heard in the current speech turn. Gemini doesn't say who is
+     * speaking, so there are no speaker numbers here, only man / woman / child.
+     */
+    private fun liveSpeaker(): SpeakerInfo? =
+        VoiceType.fromPitch(livePitch.median()).takeIf { it != VoiceType.UNKNOWN }?.let { SpeakerInfo(null, it) }
+
     /** Gemini Live: what was said (and its translation) since the last pause becomes one line. */
     private fun flushLiveSegment() {
+        val voice = VoiceType.fromPitch(livePitch.take())
         if (liveInput.isBlank() && liveOutput.isBlank()) return
         val now = clock()
-        recordLine(liveInput.toString(), liveOutput.toString(), liveSegmentStart ?: now, now)
+        recordLine(liveInput.toString(), liveOutput.toString(), liveSegmentStart ?: now, now, SpeakerInfo(null, voice))
         liveInput.setLength(0)
         liveOutput.setLength(0)
         liveSegmentStart = null
@@ -872,6 +942,16 @@ class CaptionService : Service() {
 
         /** Translated text appears at most this much later than it arrives (to match the voice). */
         private const val MAX_CAPTION_DELAY_MS = 4_000L
+
+        /** The voiceprint ("spk") and how many frames it covers ("spk_frames") in a Vosk result. */
+        fun parseVoiceprint(json: String): Pair<FloatArray?, Int> =
+            try {
+                val o = org.json.JSONObject(json)
+                val arr = o.optJSONArray("spk")
+                (arr?.let { a -> FloatArray(a.length()) { a.getDouble(it).toFloat() } }) to o.optInt("spk_frames")
+            } catch (e: Exception) {
+                null to 0
+            }
 
         /** [projectionData] is the screen-capture consent result; null for microphone mode. */
         fun start(context: Context, resultCode: Int = Activity.RESULT_CANCELED, projectionData: Intent? = null) {

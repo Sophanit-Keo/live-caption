@@ -53,6 +53,8 @@ data class SubtitleAppearance(
     val showOriginal: Boolean = true,
     /** Each sentence on its own line(s), newest at the bottom, instead of one running text. */
     val sentences: Boolean = true,
+    /** Mark who is speaking: man / woman / child, and a colour per speaker. */
+    val speakers: Boolean = true,
 )
 
 /** The small dot in the corner of the captions. */
@@ -62,6 +64,17 @@ enum class CaptionIndicator { LISTENING, SPEAKING, CONNECTING, PAUSED }
 private class DimSpan(private val factor: Float) : CharacterStyle(), UpdateAppearance {
     override fun updateDrawState(tp: TextPaint) {
         tp.alpha = (tp.alpha * factor).toInt()
+    }
+}
+
+/**
+ * A speaker's text colour. Only the letters' fill is coloured: in the outline style the
+ * outline pass keeps its black edge. The current opacity (dimmed text) is kept.
+ */
+private class SpeakerColorSpan(private val color: Int) : CharacterStyle(), UpdateAppearance {
+    override fun updateDrawState(tp: TextPaint) {
+        if (tp.style == Paint.Style.STROKE) return
+        tp.color = (color and 0x00FFFFFF) or (tp.alpha shl 24)
     }
 }
 
@@ -281,7 +294,7 @@ class SubtitleView @JvmOverloads constructor(
             primary.text = fitSentences(shownMain)
             secondary.text = original?.newest()?.styled() ?: ""
         } else {
-            primary.text = shownMain.continuous().styled()
+            primary.text = shownMain.continuous(marker = ::markerFor).styled()
             secondary.text = original?.continuous()?.styled() ?: ""
         }
         secondary.visibility = if (appearance.showOriginal && secondary.text.isNotEmpty()) VISIBLE else GONE
@@ -294,26 +307,58 @@ class SubtitleView @JvmOverloads constructor(
      * own line, a little dimmer) as fit in the chosen number of lines.
      */
     private fun fitSentences(s: SentenceSnapshot): CharSequence {
-        val items = ArrayList<CaptionText>()
-        s.done.takeLast(MAX_SENTENCES_SHOWN).forEach { items += CaptionText(it) }
-        if (s.current.isNotEmpty()) items += CaptionText(s.current, s.pendingStart)
+        class Item(val text: CaptionText, val speaker: SpeakerInfo?) {
+            val marker = markerFor(speaker)
+            val shown get() = marker + text.text
+        }
+        val items = ArrayList<Item>()
+        s.done.takeLast(MAX_SENTENCES_SHOWN).forEach { items += Item(CaptionText(it.text), it.speaker) }
+        if (s.current.isNotEmpty()) items += Item(CaptionText(s.current, s.pendingStart), s.currentSpeaker)
         if (items.isEmpty()) return ""
         val width = primary.width - primary.totalPaddingLeft - primary.totalPaddingRight
         val from = if (width <= 0) items.size - 1 else Sentences.fitNewest(items.size, appearance.lines) { start ->
-            lineCount(items.subList(start, items.size).joinToString("\n") { it.text }, width)
+            lineCount(items.subList(start, items.size).joinToString("\n") { it.shown }, width)
         }
         val out = SpannableStringBuilder()
+        var newestStart = 0
         for (i in from until items.size) {
             if (out.isNotEmpty()) out.append('\n')
-            out.append(items[i].text)
+            val start = out.length
+            if (i == items.size - 1) newestStart = start
+            out.append(items[i].shown)
+            speakerColor(items[i].speaker)?.let {
+                out.setSpan(SpeakerColorSpan(it), start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
         val newest = items.last()
-        val newestStart = out.length - newest.text.length
         if (newestStart > 0) out.setSpan(DimSpan(EARLIER_ALPHA), 0, newestStart, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        if (newest.pendingStart < newest.text.length) {
-            out.setSpan(DimSpan(PENDING_ALPHA), newestStart + newest.pendingStart.coerceAtLeast(0), out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (newest.text.pendingStart < newest.text.text.length) {
+            val pendingFrom = newestStart + newest.marker.length + newest.text.pendingStart.coerceAtLeast(0)
+            out.setSpan(DimSpan(PENDING_ALPHA), pendingFrom, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         return out
+    }
+
+    /** "👩 " before a sentence, when who is speaking is shown and the voice type is known. */
+    private fun markerFor(speaker: SpeakerInfo?): String {
+        if (!appearance.speakers || speaker == null) return ""
+        return when (speaker.voice) {
+            VoiceType.MAN -> "\uD83D\uDC68 " // 👨
+            VoiceType.WOMAN -> "\uD83D\uDC69 " // 👩
+            VoiceType.CHILD -> "\uD83E\uDDD2 " // 🧒
+            VoiceType.UNKNOWN -> ""
+        }
+    }
+
+    /**
+     * Each speaker after the first gets their own colour, as in TV subtitles: yellow, cyan,
+     * green, pink, orange (white instead of yellow when the style's text is already yellow).
+     */
+    private fun speakerColor(speaker: SpeakerInfo?): Int? {
+        val id = speaker?.id ?: return null
+        if (!appearance.speakers || id <= 1) return null
+        val palette = if (appearance.style == SubtitleStyle.CONTRAST) CONTRAST_SPEAKER_COLORS else SPEAKER_COLORS
+        return palette[(id - 2) % palette.size]
     }
 
     /** Lines [text] takes in the translation line at [width], laid out the way the view does. */
@@ -371,6 +416,15 @@ class SubtitleView @JvmOverloads constructor(
     private companion object {
         /** Earlier sentences considered for the box; more never fit anyway. */
         const val MAX_SENTENCES_SHOWN = 4
+
+        val SPEAKER_COLORS = intArrayOf(
+            Color.rgb(255, 224, 102), Color.rgb(127, 219, 255), Color.rgb(168, 240, 160),
+            Color.rgb(255, 179, 217), Color.rgb(255, 197, 138),
+        )
+        val CONTRAST_SPEAKER_COLORS = intArrayOf(
+            Color.WHITE, Color.rgb(127, 219, 255), Color.rgb(168, 240, 160),
+            Color.rgb(255, 179, 217), Color.rgb(255, 197, 138),
+        )
     }
     private fun sp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 }

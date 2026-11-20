@@ -147,5 +147,25 @@ object TranscriptLabels {
         transcript = context.getString(R.string.transcript_lines_heading),
         languages = languages(context, t.info),
         topic = context.getString(R.string.export_topic),
+        speaker = { speaker(context, it) },
     )
+
+    /** "Speaker 2 · Woman", "Woman" or "Speaker 2"; with [withMarker], "👩 " in front. */
+    fun speaker(context: Context, line: TranscriptLine, withMarker: Boolean = false): String? {
+        val voice = when (line.voice) {
+            VoiceType.MAN -> context.getString(R.string.voice_man)
+            VoiceType.WOMAN -> context.getString(R.string.voice_woman)
+            VoiceType.CHILD -> context.getString(R.string.voice_child)
+            VoiceType.UNKNOWN -> null
+        }
+        val number = line.speaker?.let { context.getString(R.string.speaker_number, it) }
+        val text = listOfNotNull(number, voice).joinToString(" · ").ifEmpty { return null }
+        val marker = when (line.voice) {
+            VoiceType.MAN -> "\uD83D\uDC68 "
+            VoiceType.WOMAN -> "\uD83D\uDC69 "
+            VoiceType.CHILD -> "\uD83E\uDDD2 "
+            VoiceType.UNKNOWN -> ""
+        }
+        return if (withMarker) marker + text else text
+    }
 }

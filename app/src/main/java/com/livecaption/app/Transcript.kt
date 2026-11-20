@@ -15,6 +15,9 @@ data class TranscriptLine(
     val endMs: Long,
     val original: String,
     val translation: String?,
+    /** Speaker number when speakers were told apart. */
+    val speaker: Int? = null,
+    val voice: VoiceType = VoiceType.UNKNOWN,
 )
 
 /** What was captioned, and how. */
@@ -121,6 +124,8 @@ class TranscriptStore(private val dir: File) {
                     endMs = json.optLong("end"),
                     original = json.optString("original"),
                     translation = json.optString("translation").takeIf { json.has("translation") && it.isNotEmpty() },
+                    speaker = if (json.has("speaker")) json.optInt("speaker") else null,
+                    voice = VoiceType.fromName(json.optString("voice")),
                 )
                 "summary" -> summary = TranscriptSummary(json.optLong("createdAt"), json.optString("language"), json.optString("text"))
                 "end" -> endedAt = json.optLong("endedAt")
@@ -193,6 +198,8 @@ class TranscriptWriter(file: File) : AutoCloseable {
             .put("end", line.endMs)
             .put("original", line.original)
         line.translation?.let { json.put("translation", it) }
+        line.speaker?.let { json.put("speaker", it) }
+        if (line.voice != VoiceType.UNKNOWN) json.put("voice", line.voice.name)
         write(json)
         lineCount++
     }
@@ -216,7 +223,32 @@ object TranscriptFormat {
         val transcript: String,
         val languages: String,
         val topic: String,
+        /** "Speaker 2 · Woman", or null when nothing is known about who spoke. */
+        val speaker: (TranscriptLine) -> String? = { null },
     )
+
+    /** The label to show before [line], only when the speaker differs from [previous]. */
+    fun speakerChange(line: TranscriptLine, previous: TranscriptLine?, label: (TranscriptLine) -> String?): String? {
+        if (line.speaker == null && line.voice == VoiceType.UNKNOWN) return null
+        if (previous != null && previous.speaker == line.speaker && previous.voice == line.voice) return null
+        return label(line)
+    }
+
+    /** English speaker labels, for text sent to Gemini: "Speaker 2 (woman)". */
+    fun englishSpeaker(line: TranscriptLine): String? {
+        val voice = when (line.voice) {
+            VoiceType.MAN -> "man"
+            VoiceType.WOMAN -> "woman"
+            VoiceType.CHILD -> "child"
+            VoiceType.UNKNOWN -> null
+        }
+        return when {
+            line.speaker != null && voice != null -> "Speaker ${line.speaker} ($voice)"
+            line.speaker != null -> "Speaker ${line.speaker}"
+            voice != null -> voice.replaceFirstChar { it.uppercase() }
+            else -> null
+        }
+    }
 
     fun toText(t: Transcript, labels: Labels, date: String): String = buildString {
         append(labels.heading).append('\n')
@@ -228,8 +260,9 @@ object TranscriptFormat {
             append('\n').append(labels.summary).append('\n').append(it.text.trim()).append('\n')
         }
         append('\n').append(labels.transcript).append('\n')
-        for (line in t.lines) {
+        t.lines.forEachIndexed { i, line ->
             append('[').append(formatClock(line.startMs)).append("] ")
+            speakerChange(line, t.lines.getOrNull(i - 1), labels.speaker)?.let { append(it).append(": ") }
             val main = line.translation ?: line.original
             append(main).append('\n')
             if (line.translation != null && line.original.isNotBlank()) {
@@ -242,11 +275,12 @@ object TranscriptFormat {
      * SubRip subtitles: translation on the first line, original below. Times count from when
      * captions were started.
      */
-    fun toSrt(t: Transcript): String = buildString {
+    fun toSrt(t: Transcript, speaker: (TranscriptLine) -> String? = { null }): String = buildString {
         t.lines.forEachIndexed { i, line ->
             val end = maxOf(line.endMs, line.startMs + MIN_CUE_MS)
             append(i + 1).append('\n')
             append(srtTime(line.startMs)).append(" --> ").append(srtTime(end)).append('\n')
+            speakerChange(line, t.lines.getOrNull(i - 1), speaker)?.let { append('[').append(it).append("] ") }
             line.translation?.let { append(it).append('\n') }
             if (line.original.isNotBlank()) append(line.original).append('\n')
             append('\n')

@@ -5,8 +5,8 @@ package com.livecaption.app
  * worse than a skipped one, so only the newest [maxPending] are kept, and speech speeds up
  * while sentences are waiting.
  */
-class SpeechQueue(private val maxPending: Int = 2) {
-    private val pending = ArrayDeque<String>()
+class SpeechQueue<T>(private val maxPending: Int = 2, private val isBlank: (T) -> Boolean = { false }) {
+    private val pending = ArrayDeque<T>()
 
     /** Number of sentences skipped because newer ones arrived. */
     var dropped = 0
@@ -14,16 +14,16 @@ class SpeechQueue(private val maxPending: Int = 2) {
 
     val size: Int get() = pending.size
 
-    fun add(text: String) {
-        if (text.isBlank()) return
-        pending.addLast(text)
+    fun add(item: T) {
+        if (isBlank(item)) return
+        pending.addLast(item)
         while (pending.size > maxPending) {
             pending.removeFirst()
             dropped++
         }
     }
 
-    fun next(): String? = pending.removeFirstOrNull()
+    fun next(): T? = pending.removeFirstOrNull()
 
     fun clear() = pending.clear()
 

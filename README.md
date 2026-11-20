@@ -73,6 +73,38 @@ immediately.
 
 ![Subtitle settings](docs/screenshots/subtitle-settings.png)
 
+## Who is speaking
+
+| In the subtitles | Settings |
+| --- | --- |
+| ![Speakers in the subtitles](docs/screenshots/speakers.png) | ![Who is speaking settings](docs/screenshots/speaker-settings.png) |
+
+- **Voice type**: each sentence gets a 👨 man, 👩 woman or 🧒 child marker, guessed on the
+  phone from the pitch of the voice (YIN pitch tracking on the captured audio).
+- **Speaker numbers** (Offline and Gemini engines): different people are told apart as
+  Speaker 1, 2, 3… using voiceprints (x-vectors) from Vosk's 13 MB speaker model, downloaded
+  once. In the subtitles, each speaker after the first gets their own colour, as in TV
+  subtitles. Gemini Live doesn't report who is speaking, so it gets voice types without numbers.
+- **Matching voice**: the phone voice reading translations speaks lower for men and higher for
+  women and children. Android doesn't say whether a voice is male or female, so the same voice
+  is pitched up or down. Gemini Live imitates each speaker's voice by itself.
+- **Transcripts**: speaker labels are saved ("Speaker 2 · Woman") and appear in the transcript
+  screen, in .txt and .srt exports, and in the text sent for summaries.
+
+How the thresholds were chosen, on real recordings:
+
+| Check | Data | Result |
+| --- | --- | --- |
+| Man vs woman line | 222 gender-labelled Khmer recordings (Google FLEURS) | Men 112–143 Hz, women 211–236 Hz (5th–95th percentile); any line from 155 to 180 Hz was right for all; the app uses 170 Hz |
+| Same line, other voices | 40 English readers (LibriSpeech dev-clean, 20 men and 20 women) | Speakers split 20/20 at 170 Hz; single sentences fell on the wrong side 3% of the time, so voice type is judged per speaker, not per sentence |
+| Child line | Same 40 readers | One adult woman's median was 263 Hz, so "child" starts at 290 Hz |
+| Telling people apart | Same 40 readers, 456 sentences | Same person: median similarity 0.68; different people: 0.22. At the 0.45 threshold, 95% of same-person pairs match and 9% of different-person pairs look alike. In replayed conversations (about 11 sentences per person), 87% of sentences went to the right person with 2 people, 79% with 3 and 75% with 4 |
+
+Known limits: pitch can't tell a high-voiced man from a woman, or an older child from a woman
+(children with lower voices show as women). Loud music under speech confuses it. Two similar
+voices (two men of similar age) can merge into one speaker, and one person can split into two
+when their voice changes a lot (shouting, whispering).
+
 ## Transcripts and summaries
 
 While captions run, every finished line (original, translation and time) is saved on the phone,
@@ -162,6 +194,11 @@ so it is off by default).
 folder with `tokenizer.json` and the two `.onnx` files; it is skipped otherwise. The Gemini
 and Live Translate tests run against local fake servers; they do not call Google.
 
+`SpeakersTest` checks voice types on real recordings when `VOICE_DATA` points at a folder of
+16 kHz PCM files with a `labels.txt` (`name,MAN` per line), and replays conversations from
+real voiceprints when `SPEAKERS_DATA` points at a file of exported voiceprints
+(`speaker,pitch,frames,128 numbers` per line); both are skipped otherwise.
+
 ## Use
 
 1. Pick the engine, the language to translate to, and the audio source.
@@ -190,6 +227,8 @@ and Live Translate tests run against local fake servers; they do not call Google
 | `SubtitleView` | The caption box: styles, outlined text, newest lines at the bottom, status dot |
 | `CaptionScheduler` | Shows Gemini Live's text when its voice speaks it, in order |
 | `Sentences` | Finds sentence ends; `SentenceBuffer` holds caption text as sentences |
+| `Speakers` | Pitch tracking, man/woman/child, and telling speakers apart (`SpeakerTracker`) |
+| `VoiceprintStats` | The average voiceprint that `SpeakerTracker` takes away before comparing voices |
 | `TranslationPipeline` | What to translate when: merging, context, rate-limit back-off |
 | `TextTranslator` | ML Kit, Gemini and offline-Khmer translators |
 | `LiveTranslate` | Gemini Live Translate WebSocket session and reconnecting manager |

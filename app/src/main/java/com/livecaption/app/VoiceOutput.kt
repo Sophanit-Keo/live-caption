@@ -151,7 +151,12 @@ class TtsVoice(
     /** Normal speech rate chosen by the user (1 = normal); can change while speaking. */
     var baseRate: Float = rate
 
-    private val queue = SpeechQueue()
+    /** Speak lower for men and higher for women and children. */
+    var matchVoice: Boolean = true
+
+    private class Utterance(val text: String, val voice: VoiceType)
+
+    private val queue = SpeechQueue<Utterance> { it.text.isBlank() }
     private val main = Handler(Looper.getMainLooper())
     private val inEngine = LinkedHashSet<String>()
     private var nextId = 0
@@ -175,9 +180,9 @@ class TtsVoice(
         })
     }
 
-    /** Main thread only. */
-    fun speak(text: String) {
-        queue.add(text)
+    /** Main thread only. [voice] is who said the sentence, to speak it in a matching pitch. */
+    fun speak(text: String, voice: VoiceType = VoiceType.UNKNOWN) {
+        queue.add(Utterance(text, voice))
         pump()
     }
 
@@ -187,11 +192,12 @@ class TtsVoice(
 
     private fun pump() {
         while (inEngine.size < IN_ENGINE) {
-            val text = queue.next() ?: break
+            val next = queue.next() ?: break
             val id = "caption-${nextId++}"
             // Faster while sentences are waiting, so the voice doesn't fall behind the video.
             tts.setSpeechRate(baseRate * queue.rateFactor(alsoQueued = inEngine.size))
-            if (tts.speak(text, TextToSpeech.QUEUE_ADD, Bundle(), id) == TextToSpeech.SUCCESS) inEngine += id
+            tts.setPitch(if (matchVoice) pitchFor(next.voice) else 1f)
+            if (tts.speak(next.text, TextToSpeech.QUEUE_ADD, Bundle(), id) == TextToSpeech.SUCCESS) inEngine += id
         }
         onSpeaking(inEngine.isNotEmpty())
     }
@@ -209,9 +215,20 @@ class TtsVoice(
         tts.shutdown()
     }
 
-    private companion object {
+    companion object {
         /** Sentences handed to the engine at once: the one playing and the next one. */
-        const val IN_ENGINE = 2
+        private const val IN_ENGINE = 2
+
+        /**
+         * Pitch for the phone's voice by who is speaking. Android doesn't say whether a voice is
+         * male or female, so the same voice is made lower or higher.
+         */
+        fun pitchFor(voice: VoiceType): Float = when (voice) {
+            VoiceType.MAN -> 0.82f
+            VoiceType.WOMAN -> 1.12f
+            VoiceType.CHILD -> 1.4f
+            VoiceType.UNKNOWN -> 1f
+        }
     }
 }
 

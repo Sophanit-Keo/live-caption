@@ -55,7 +55,7 @@ class TranscriptActivity : AppCompatActivity() {
         uri?.let { export(it) { t -> TranscriptFormat.toText(t, TranscriptLabels.formatLabels(this, t), TranscriptLabels.date(t)) } }
     }
     private val saveSrt = registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { uri ->
-        uri?.let { export(it) { t -> TranscriptFormat.toSrt(t) } }
+        uri?.let { export(it) { t -> TranscriptFormat.toSrt(t) { line -> TranscriptLabels.speaker(this, line) } } }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -314,6 +314,11 @@ class TranscriptActivity : AppCompatActivity() {
                 is Line -> {
                     val line = lines[position - 1]
                     with(holder.binding) {
+                        val label = TranscriptFormat.speakerChange(line, lines.getOrNull(position - 2)) {
+                            TranscriptLabels.speaker(root.context, it, withMarker = true)
+                        }
+                        speaker.text = label
+                        speaker.isVisible = label != null
                         time.text = TranscriptFormat.formatClock(line.startMs)
                         main.text = line.translation ?: line.original
                         secondary.text = line.original

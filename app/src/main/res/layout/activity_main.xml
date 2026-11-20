@@ -324,6 +324,53 @@
                 android:text="@string/voice_boost" />
         </LinearLayout>
 
+        <!-- Who is speaking -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/speakers_section"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/showSpeakers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/show_speakers" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/show_speakers_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/identifySpeakers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/identify_speakers" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/identify_speakers_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/matchVoice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/match_voice" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/match_voice_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
         <!-- Transcripts -->
 
         <TextView

@@ -81,8 +81,24 @@ class Prefs(context: Context) {
         get() = sp.getInt("overlayY", -1)
         set(v) = sp.edit { putInt("overlayY", v) }
 
-    fun appearance() =
-        SubtitleAppearance(subtitleStyle, textSizeSp, boxOpacity, captionLines, centered, showOriginal, sentenceMode)
+    /** Mark who is speaking in the subtitles (man / woman / child, and a colour per speaker). */
+    var showSpeakers: Boolean
+        get() = sp.getBoolean("showSpeakers", true)
+        set(v) = sp.edit { putBoolean("showSpeakers", v) }
+
+    /** Tell different speakers apart with Vosk's speaker model (Offline and Gemini engines). */
+    var identifySpeakers: Boolean
+        get() = sp.getBoolean("identifySpeakers", true)
+        set(v) = sp.edit { putBoolean("identifySpeakers", v) }
+
+    /** The phone voice speaks lower for men and higher for women and children. */
+    var matchVoice: Boolean
+        get() = sp.getBoolean("matchVoice", true)
+        set(v) = sp.edit { putBoolean("matchVoice", v) }
+
+    fun appearance() = SubtitleAppearance(
+        subtitleStyle, textSizeSp, boxOpacity, captionLines, centered, showOriginal, sentenceMode, showSpeakers,
+    )
 
     /** Gemini Live: show translated text when its voice says it, instead of as soon as it arrives. */
     var syncCaptions: Boolean
@@ -135,6 +151,9 @@ class Prefs(context: Context) {
 
         /** Settings that change how captions look; applied to running captions at once. */
         val APPEARANCE_KEYS =
-            setOf("textSizeSp", "subtitleStyle", "boxOpacity", "captionLines", "centered", "showOriginal", "sentenceMode")
+            setOf(
+                "textSizeSp", "subtitleStyle", "boxOpacity", "captionLines", "centered", "showOriginal", "sentenceMode",
+                "showSpeakers",
+            )
     }
 }

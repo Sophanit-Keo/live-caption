@@ -156,15 +156,20 @@ class Summarizer(private val apiKey: String, private val baseUrl: String = Gemin
             append("that each start with \"• \".\n")
             append("4. Only if the speech contains decisions, tasks, deadlines or open questions: an empty line, ")
             append("the heading \"Action items\" written in $languageName, then lines that start with \"• \".\n")
+            append("Speaker labels such as \"Speaker 2 (woman)\" come from automatic voice analysis and may be ")
+            append("wrong; mention who said what only when it helps. ")
             append("Use only what is in the transcript. Do not invent facts, names or numbers.")
         }
 
         fun userText(t: Transcript): String {
             val lines = StringBuilder()
-            for (line in t.lines) {
+            t.lines.forEachIndexed { i, line ->
                 val text = line.original.ifBlank { line.translation.orEmpty() }
-                if (text.isBlank()) continue
-                lines.append('[').append(TranscriptFormat.formatClock(line.startMs)).append("] ").append(text).append('\n')
+                if (text.isBlank()) return@forEachIndexed
+                lines.append('[').append(TranscriptFormat.formatClock(line.startMs)).append("] ")
+                TranscriptFormat.speakerChange(line, t.lines.getOrNull(i - 1), TranscriptFormat::englishSpeaker)
+                    ?.let { lines.append(it).append(": ") }
+                lines.append(text).append('\n')
             }
             val transcript = if (lines.length > MAX_TRANSCRIPT_CHARS) lines.substring(lines.length - MAX_TRANSCRIPT_CHARS) else lines
             return buildString {

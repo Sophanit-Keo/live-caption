@@ -119,6 +119,66 @@ class TranscriptTest {
     }
 
     @Test
+    fun speakersAreSavedAndLabelledWhenTheyChange() {
+        val writer = store.create(info("s6"))
+        writer.append(TranscriptLine(0, 2_000, "Hi.", "សួស្តី។", speaker = 1, voice = VoiceType.WOMAN))
+        writer.append(TranscriptLine(2_000, 4_000, "How are you?", null, speaker = 1, voice = VoiceType.WOMAN))
+        writer.append(TranscriptLine(4_000, 6_000, "Fine.", null, speaker = 2, voice = VoiceType.MAN))
+        writer.append(TranscriptLine(6_000, 7_000, "Yay!", null, voice = VoiceType.CHILD))
+        writer.close()
+        val t = store.load("s6")!!
+        assertEquals(listOf(1, 1, 2, null), t.lines.map { it.speaker })
+        assertEquals(VoiceType.CHILD, t.lines[3].voice)
+
+        val labels = TranscriptFormat.Labels("H", "S", "T", "", "Topic") { TranscriptFormat.englishSpeaker(it) }
+        val text = TranscriptFormat.toText(t, labels, "d")
+        assertTrue(text, text.contains("[0:00] Speaker 1 (woman): សួស្តី។\n"))
+        assertTrue(text, text.contains("[0:02] How are you?\n")) // same speaker: no label
+        assertTrue(text, text.contains("[0:04] Speaker 2 (man): Fine.\n"))
+        assertTrue(text, text.contains("[0:06] Child: Yay!\n"))
+        val srt = TranscriptFormat.toSrt(t) { TranscriptFormat.englishSpeaker(it) }
+        assertTrue(srt, srt.contains("[Speaker 2 (man)] Fine."))
+        assertTrue(Summarizer.userText(t).contains("[0:04] Speaker 2 (man): Fine."))
+    }
+
+    @Test
+    fun sentencesKeepTheirSpeakers() {
+        val b = SentenceBuffer { 0L }
+        val woman = SpeakerInfo(1, VoiceType.WOMAN)
+        val man = SpeakerInfo(2, VoiceType.MAN)
+        b.commit("Hello. How are you?", woman)
+        b.setPending("I am", man)
+        val s = b.snapshot()
+        assertEquals(listOf(woman, woman), s.done.map { it.speaker })
+        assertEquals(man, s.currentSpeaker)
+        assertEquals(man, s.newestSpeaker())
+        // Continuous text marks only where the speaker changes.
+        val marked = s.continuous { if (it == man) "M: " else "W: " }.text
+        assertEquals("W: Hello. How are you? M: I am", marked)
+        // Streaming text keeps the speaker of the sentence being spoken.
+        val live = SentenceBuffer { 0L }
+        live.append("Bonjour. ", SpeakerInfo(null, VoiceType.CHILD))
+        live.append("Salut", SpeakerInfo(null, VoiceType.CHILD))
+        assertEquals(VoiceType.CHILD, live.snapshot().done.single().speaker?.voice)
+    }
+
+    @Test
+    fun phoneVoicePitchFollowsTheSpeaker() {
+        assertTrue(TtsVoice.pitchFor(VoiceType.MAN) < 1f)
+        assertEquals(1f, TtsVoice.pitchFor(VoiceType.UNKNOWN))
+        assertTrue(TtsVoice.pitchFor(VoiceType.CHILD) > TtsVoice.pitchFor(VoiceType.WOMAN))
+        assertTrue(TtsVoice.pitchFor(VoiceType.WOMAN) > 1f)
+    }
+
+    @Test
+    fun voiceprintsAreReadFromVoskResults() {
+        val (vector, frames) = CaptionService.parseVoiceprint("""{"text":"hi","spk":[0.5,-1.25,2],"spk_frames":321}""")
+        assertEquals(listOf(0.5f, -1.25f, 2f), vector!!.toList())
+        assertEquals(321, frames)
+        assertNull(CaptionService.parseVoiceprint("""{"text":"hi"}""").first)
+    }
+
+    @Test
     fun durationsAndClocksReadNaturally() {
         assertEquals("45 s", TranscriptFormat.formatDuration(45_000))
         assertEquals("23 min", TranscriptFormat.formatDuration(23 * 60_000L + 5_000))

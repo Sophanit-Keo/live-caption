@@ -46,7 +46,7 @@ class TextAndVoiceTest {
 
     @Test
     fun speechQueueKeepsOnlyTheNewestAndSpeedsUp() {
-        val q = SpeechQueue(maxPending = 2)
+        val q = SpeechQueue<String>(maxPending = 2) { it.isBlank() }
         assertEquals(1f, q.rateFactor())
         q.add("one")
         q.add("two")
@@ -101,12 +101,12 @@ class TextAndVoiceTest {
 
         now = 20_000
         t.append("Next")
-        assertEquals(SentenceSnapshot(emptyList(), "Next"), t.snapshot())
+        assertEquals(SentenceSnapshot.of(emptyList(), "Next"), t.snapshot())
 
         // A pause closes the sentence; the next words start a new one.
         t.endSegment()
         t.append("សួស្តី")
-        assertEquals(listOf("Next"), t.snapshot().done)
+        assertEquals(listOf("Next"), t.snapshot().done.map { it.text })
         assertEquals("សួស្តី", t.snapshot().current)
     }
 

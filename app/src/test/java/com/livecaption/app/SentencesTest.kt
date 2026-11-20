@@ -38,18 +38,18 @@ class SentencesTest {
         val b = SentenceBuffer { 0L }
         b.append("It costs 3.")
         b.append("5 dollars. And then")
-        assertEquals(listOf("It costs 3.5 dollars."), b.snapshot().done)
+        assertEquals(listOf("It costs 3.5 dollars."), b.snapshot().done.map { it.text })
         assertEquals("And then", b.snapshot().current)
         b.append(" we left.")
         assertEquals("And then we left.", b.snapshot().current) // Not finished until more text or a pause.
         b.endSegment()
-        assertEquals(listOf("It costs 3.5 dollars.", "And then we left."), b.snapshot().done)
+        assertEquals(listOf("It costs 3.5 dollars.", "And then we left."), b.snapshot().done.map { it.text })
         assertEquals("", b.snapshot().current)
         // Khmer fragments with no spaces stay joined correctly.
         b.append("សួស្តី។")
         b.append("ខ្ញុំ")
         b.append("ចង់ទៅផ្សារ។")
-        assertEquals("សួស្តី។", b.snapshot().done.last())
+        assertEquals("សួស្តី។", b.snapshot().done.last().text)
         assertEquals("ខ្ញុំចង់ទៅផ្សារ។", b.snapshot().current)
     }
 
@@ -58,7 +58,7 @@ class SentencesTest {
         val b = SentenceBuffer(maxSentences = 3) { 0L }
         b.commit("One. Two.")
         b.commit("Three. Four.")
-        assertEquals(listOf("Two.", "Three.", "Four."), b.snapshot().done)
+        assertEquals(listOf("Two.", "Three.", "Four."), b.snapshot().done.map { it.text })
         assertEquals("Four.", b.snapshot().newest().text)
     }
 

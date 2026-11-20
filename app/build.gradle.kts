@@ -12,8 +12,8 @@ android {
         // 29 = Android 10, the first release that lets apps capture other apps' audio.
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
         // Phone ABIs only; add "x86_64" to run on an emulator.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -38,6 +38,10 @@ android {
         unitTests.all {
             // Optional: directory holding the NLLB model files, enables NllbModelTest.
             it.systemProperty("nllb.dir", System.getenv("NLLB_DIR") ?: "")
+            // Optional: voiceprints exported by the speaker calibration, enables a data test.
+            it.systemProperty("speakers.data", System.getenv("SPEAKERS_DATA") ?: "")
+            it.systemProperty("voice.data", System.getenv("VOICE_DATA") ?: "")
+            it.systemProperty("speakers.sweep", System.getenv("SPEAKERS_SWEEP") ?: "")
             it.maxHeapSize = "3g"
             // Screenshots of the subtitle UI need Robolectric's Android runtime (a large
             // download), so they only run with -Pscreenshots.

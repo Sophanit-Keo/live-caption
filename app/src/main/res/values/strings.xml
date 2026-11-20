@@ -75,6 +75,8 @@
     <string name="status_connecting_translation">Connecting to Gemini…</string>
     <string name="status_downloading_khmer">Downloading offline Khmer model… %1$d%%</string>
     <string name="status_loading_khmer">Loading offline Khmer model…</string>
+    <string name="status_downloading_speakers">Downloading the speaker model… %1$d%%</string>
+    <string name="speakers_unavailable">Couldn\'t load the speaker model, so speakers aren\'t told apart this time.</string>
     <string name="status_connecting_live">Connecting to Gemini Live…</string>
     <string name="status_reconnecting_live">Reconnecting to Gemini Live…</string>
     <string name="status_error">Error: %1$s</string>
@@ -118,6 +120,17 @@
     <string name="notification_paused">Live Caption is paused</string>
     <string name="notification_locked">Subtitles are locked. Tap Unlock to use their controls again.</string>
 
+    <string name="speakers_section">Who is speaking</string>
+    <string name="show_speakers">Show who is speaking</string>
+    <string name="show_speakers_hint">Marks each sentence 👨 man, 👩 woman or 🧒 child, and gives each speaker their own colour. It is guessed from the voice, so it can be wrong, for example over loud music or with very high or low voices.</string>
+    <string name="identify_speakers">Tell speakers apart (Speaker 1, 2, 3…)</string>
+    <string name="identify_speakers_hint">Offline and Gemini engines. Downloads a 13 MB voice model once. With Gemini Live you get man / woman / child, without numbers.</string>
+    <string name="match_voice">Match the speaker\'s voice</string>
+    <string name="match_voice_hint">The phone voice speaks lower for men and higher for women and children. Gemini Live imitates each speaker\'s voice by itself.</string>
+    <string name="speaker_number">Speaker %1$d</string>
+    <string name="voice_man">Man</string>
+    <string name="voice_woman">Woman</string>
+    <string name="voice_child">Child</string>
     <string name="transcripts_section">Transcripts and summaries</string>
     <string name="save_transcripts">Save a transcript of each session</string>
     <string name="save_transcripts_hint">Kept only on this phone. Open a transcript to read it, get a summary from Gemini, share it, or save it as a text or subtitle (.srt) file.</string>

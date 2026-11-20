@@ -59,7 +59,7 @@ class SubtitleScreenshotTest {
             val view = SubtitleView(context)
             view.apply(SubtitleAppearance(style = style, textSizeSp = 20f, lines = 2))
             // The last words are still being spoken: drawn dimmer.
-            view.setCaption(SentenceSnapshot(emptyList(), khmer, khmer.lastIndexOf(' ') + 1), SentenceSnapshot(emptyList(), english))
+            view.setCaption(SentenceSnapshot.of(emptyList(), khmer, khmer.lastIndexOf(' ') + 1), SentenceSnapshot.of(emptyList(), english))
             view.setIndicator(if (style == SubtitleStyle.BOX) CaptionIndicator.SPEAKING else CaptionIndicator.LISTENING)
             column.addView(
                 view,
@@ -79,8 +79,8 @@ class SubtitleScreenshotTest {
         }
         val khmerSentences = listOf("សូមស្វាគមន៍មកកាន់កម្មវិធីវិញ។", "ថ្ងៃនេះ យើងនឹងធ្វើបាយឆា។")
         val khmerNow = "ដំបូង ដាក់ខ្ទះឲ្យក្តៅ"
-        val main = SentenceSnapshot(khmerSentences, khmerNow, khmerNow.indexOf(' ') + 1)
-        val original = SentenceSnapshot(listOf("Welcome back to the show.", "Today we are cooking fried rice."), "First, heat the pan")
+        val main = SentenceSnapshot.of(khmerSentences, khmerNow, khmerNow.indexOf(' ') + 1)
+        val original = SentenceSnapshot.of(listOf("Welcome back to the show.", "Today we are cooking fried rice."), "First, heat the pan")
         val shown = mutableListOf<Pair<SubtitleView, SubtitleAppearance>>()
         for ((label, sentences) in listOf("Sentence by sentence (3 lines)" to true, "Continuous (3 lines)" to false)) {
             column.addView(
@@ -113,6 +113,54 @@ class SubtitleScreenshotTest {
     }
 
     @Test
+    fun speakers() {
+        val column = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (16 * density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val woman = SpeakerInfo(1, VoiceType.WOMAN)
+        val man = SpeakerInfo(2, VoiceType.MAN)
+        val child = SpeakerInfo(3, VoiceType.CHILD)
+        val main = SentenceSnapshot(
+            listOf(Sentence("តើកូនចង់ញ៉ាំអ្វី?", woman), Sentence("ប៉ាធ្វើបាយឆាឲ្យ។", man)),
+            "ខ្ញុំចង់ញ៉ាំបាយឆា!", currentSpeaker = child,
+        )
+        val original = SentenceSnapshot(
+            listOf(Sentence("What do you want to eat?", woman), Sentence("Dad will make fried rice.", man)),
+            "I want fried rice!", currentSpeaker = child,
+        )
+        val shown = mutableListOf<Pair<SubtitleView, SubtitleAppearance>>()
+        for (style in listOf(SubtitleStyle.BOX, SubtitleStyle.OUTLINE)) {
+            column.addView(
+                TextView(context).apply {
+                    text = style.name.lowercase().replaceFirstChar { it.uppercase() } + " · 3 lines"
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                },
+            )
+            val appearance = SubtitleAppearance(style = style, lines = 3)
+            val view = SubtitleView(context).apply {
+                apply(appearance)
+                setCaption(main, original)
+            }
+            shown += view to appearance
+            column.addView(
+                view,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = (20 * density).toInt() },
+            )
+        }
+        column.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        column.layout(0, 0, column.measuredWidth, column.measuredHeight)
+        shown.forEach { (view, appearance) -> view.apply(appearance) }
+        save(column, "speakers.png", backdrop = true)
+    }
+
+    @Test
     fun overlayWithControls() {
         val prefs = Prefs(context)
         val overlay = CaptionOverlay(context, prefs, NoActions)
@@ -120,8 +168,8 @@ class SubtitleScreenshotTest {
         overlay.setVoiceButton(VoiceButton.ON)
         overlay.setIndicator(CaptionIndicator.SPEAKING)
         overlay.setCaption(
-            SentenceSnapshot(listOf("សួស្តីអ្នកទាំងអស់គ្នា។"), "តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?"),
-            SentenceSnapshot(listOf("Hello everyone."), "How are you today?"),
+            SentenceSnapshot.of(listOf("សួស្តីអ្នកទាំងអស់គ្នា។"), "តើថ្ងៃនេះអ្នកសុខសប្បាយជាទេ?"),
+            SentenceSnapshot.of(listOf("Hello everyone."), "How are you today?"),
         )
         CaptionOverlay::class.java.getDeclaredMethod("setControlsVisible", Boolean::class.java)
             .apply { isAccessible = true }
@@ -149,11 +197,11 @@ class SubtitleScreenshotTest {
 
         val cooking = TranscriptInfo("20261120-140300", day, TranslationEngine.GEMINI, "en", "km", "a cooking show")
         store.create(cooking).apply {
-            append(TranscriptLine(2_000, 6_000, "Today we're making fried rice at home.", "ថ្ងៃនេះ យើងនឹងធ្វើបាយឆានៅផ្ទះ។"))
-            append(TranscriptLine(9_000, 13_000, "The secret is to use rice from yesterday.", "អាថ៌កំបាំងគឺប្រើបាយពីម្សិលមិញ។"))
-            append(TranscriptLine(17_000, 21_000, "First, fry two eggs in a hot pan.", "ដំបូង ឆាពងមាន់ពីរគ្រាប់ក្នុងខ្ទះក្តៅ។"))
-            append(TranscriptLine(26_000, 29_000, "Then add the rice and the vegetables.", "បន្ទាប់មក ដាក់បាយ និងបន្លែ។"))
-            append(TranscriptLine(34_000, 38_000, "A little soy sauce, and it's ready.", "ដាក់ទឹកស៊ីអ៊ីវបន្តិច ហើយវារួចរាល់។"))
+            append(TranscriptLine(2_000, 6_000, "Today we're making fried rice at home.", "ថ្ងៃនេះ យើងនឹងធ្វើបាយឆានៅផ្ទះ។", 1, VoiceType.WOMAN))
+            append(TranscriptLine(9_000, 13_000, "The secret is to use rice from yesterday.", "អាថ៌កំបាំងគឺប្រើបាយពីម្សិលមិញ។", 1, VoiceType.WOMAN))
+            append(TranscriptLine(17_000, 21_000, "First, fry two eggs in a hot pan.", "ដំបូង ឆាពងមាន់ពីរគ្រាប់ក្នុងខ្ទះក្តៅ។", 2, VoiceType.MAN))
+            append(TranscriptLine(26_000, 29_000, "Then add the rice and the vegetables.", "បន្ទាប់មក ដាក់បាយ និងបន្លែ។", 2, VoiceType.MAN))
+            append(TranscriptLine(34_000, 38_000, "Can I taste it?", "ខ្ញុំអាចភ្លក់បានទេ?", 3, VoiceType.CHILD))
             finish(day + 7 * 60_000)
         }
         store.saveSummary(

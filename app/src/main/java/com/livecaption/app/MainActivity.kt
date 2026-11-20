@@ -177,6 +177,11 @@ class MainActivity : AppCompatActivity() {
         showOriginal.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.showOriginal = checked } }
         sentenceMode.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.sentenceMode = checked } }
         syncCaptions.setOnCheckedChangeListener { _, checked -> prefs.syncCaptions = checked }
+        showSpeakers.setOnCheckedChangeListener { _, checked -> setAppearance { prefs.showSpeakers = checked } }
+        identifySpeakers.isChecked = prefs.identifySpeakers
+        identifySpeakers.setOnCheckedChangeListener { _, checked -> prefs.identifySpeakers = checked }
+        matchVoice.isChecked = prefs.matchVoice
+        matchVoice.setOnCheckedChangeListener { _, checked -> prefs.matchVoice = checked }
         saveTranscripts.isChecked = prefs.saveTranscripts
         saveTranscripts.setOnCheckedChangeListener { _, checked -> prefs.saveTranscripts = checked }
         openTranscripts.setOnClickListener { startActivity(Intent(this@MainActivity, TranscriptsActivity::class.java)) }
@@ -205,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         captionLines.value = prefs.captionLines.toFloat().coerceIn(captionLines.valueFrom, captionLines.valueTo)
         showOriginal.isChecked = prefs.showOriginal
         sentenceMode.isChecked = prefs.sentenceMode
+        showSpeakers.isChecked = prefs.showSpeakers
         syncCaptions.isChecked = prefs.syncCaptions
         updatePreview()
     }
@@ -219,8 +225,12 @@ class MainActivity : AppCompatActivity() {
         backgroundLabel.alpha = if (boxStyle) 1f else 0.5f
         // Two sentences, so both subtitle layouts can be seen.
         val target = selectedTarget()
-        val english = SentenceSnapshot(listOf(getString(R.string.preview_first)), getString(R.string.preview_second))
-        val sample = target?.let { PREVIEW_SAMPLES[it.tag] }?.let { (first, second) -> SentenceSnapshot(listOf(first), second) }
+        val woman = SpeakerInfo(1, VoiceType.WOMAN)
+        val man = SpeakerInfo(2, VoiceType.MAN)
+        fun twoSpeakers(first: String, second: String) =
+            SentenceSnapshot(listOf(Sentence(first, woman)), second, second.length, man)
+        val english = twoSpeakers(getString(R.string.preview_first), getString(R.string.preview_second))
+        val sample = target?.let { PREVIEW_SAMPLES[it.tag] }?.let { (first, second) -> twoSpeakers(first, second) }
         if (target == null) preview.setCaption(english, null) else preview.setCaption(sample ?: english, english)
     }
 
@@ -394,7 +404,7 @@ class MainActivity : AppCompatActivity() {
         // Looks and voice settings apply to running captions at once.
         listOf(
             engineOffline, engineGemini, engineLive, apiKeyLayout, topicLayout, sourceLanguage, targetLanguage,
-            sourceDevice, sourceMic, saveTranscripts,
+            sourceDevice, sourceMic, saveTranscripts, identifySpeakers,
         ).forEach { it.isEnabled = editable }
     }
 

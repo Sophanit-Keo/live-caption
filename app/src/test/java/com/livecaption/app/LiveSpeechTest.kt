@@ -82,7 +82,7 @@ class LiveSpeechTest {
 
     @Test
     fun speechQueueCountsSentencesAlreadyInTheEngine() {
-        val q = SpeechQueue(maxPending = 2)
+        val q = SpeechQueue<String>(maxPending = 2) { it.isBlank() }
         assertEquals(1f, q.rateFactor())
         assertEquals(1.15f, q.rateFactor(alsoQueued = 1), 0.001f)
         q.add("a")

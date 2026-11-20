@@ -15,7 +15,7 @@ class CaptionTextTest {
 
     @Test
     fun continuousTextKeepsTheTailAtAWordBoundary() {
-        assertEquals("…delta", SentenceSnapshot(listOf("alpha bravo charlie delta"), "").continuous(maxChars = 12).text)
+        assertEquals("…delta", SentenceSnapshot.of(listOf("alpha bravo charlie delta"), "").continuous(maxChars = 12).text)
     }
 
     @Test

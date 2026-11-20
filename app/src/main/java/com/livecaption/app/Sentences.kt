@@ -82,20 +82,40 @@ object Sentences {
     }
 }
 
+/** One finished sentence and who said it (when known). */
+data class Sentence(val text: String, val speaker: SpeakerInfo? = null)
+
 /**
  * What the subtitles hold: finished sentences (oldest first) and the sentence being spoken,
  * whose part from [pendingStart] on may still change.
  */
-data class SentenceSnapshot(val done: List<String>, val current: String, val pendingStart: Int = current.length) {
+data class SentenceSnapshot(
+    val done: List<Sentence>,
+    val current: String,
+    val pendingStart: Int = current.length,
+    val currentSpeaker: SpeakerInfo? = null,
+) {
     val isEmpty: Boolean get() = done.isEmpty() && current.isEmpty()
 
     /** The sentence being spoken, or else the last finished one. */
     fun newest(): CaptionText =
-        if (current.isNotEmpty()) CaptionText(current, pendingStart) else CaptionText(done.lastOrNull().orEmpty())
+        if (current.isNotEmpty()) CaptionText(current, pendingStart) else CaptionText(done.lastOrNull()?.text.orEmpty())
 
-    /** All of it as one run of text, cut from the front to [maxChars] (continuous subtitles). */
-    fun continuous(maxChars: Int = DEFAULT_MAX_CHARS): CaptionText {
-        val full = (done + listOf(current).filter { it.isNotEmpty() }).joinToString(" ")
+    /** Who said [newest]. */
+    fun newestSpeaker(): SpeakerInfo? = if (current.isNotEmpty()) currentSpeaker else done.lastOrNull()?.speaker
+
+    /**
+     * All of it as one run of text, cut from the front to [maxChars] (continuous subtitles).
+     * [marker] gives text to put before a sentence whose speaker differs from the one before.
+     */
+    fun continuous(maxChars: Int = DEFAULT_MAX_CHARS, marker: (SpeakerInfo?) -> String = { "" }): CaptionText {
+        val parts = done.map { it.text to it.speaker } + listOfNotNull((current to currentSpeaker).takeIf { current.isNotEmpty() })
+        var previous: SpeakerInfo? = null
+        val full = parts.joinToString(" ") { (text, speaker) ->
+            val changed = speaker != null && speaker != previous
+            previous = speaker ?: previous
+            (if (changed) marker(speaker) else "") + text
+        }
         val tail = displayTail(full, maxChars)
         val pendingLength = current.length - pendingStart
         return CaptionText(tail, if (pendingLength <= 0) tail.length else (tail.length - pendingLength).coerceAtLeast(0))
@@ -103,6 +123,10 @@ data class SentenceSnapshot(val done: List<String>, val current: String, val pen
 
     companion object {
         val EMPTY = SentenceSnapshot(emptyList(), "")
+
+        /** Sentences without speaker information. */
+        fun of(done: List<String>, current: String, pendingStart: Int = current.length) =
+            SentenceSnapshot(done.map { Sentence(it) }, current, pendingStart)
     }
 }
 
@@ -110,45 +134,52 @@ data class SentenceSnapshot(val done: List<String>, val current: String, val pen
  * Caption text, kept as sentences so the subtitles can show them one by one. Text arrives as
  * whole finished chunks ([commit]: a recognised utterance or a translation), as streaming
  * fragments ([append]: Gemini Live transcripts), or as a replaceable guess for the words being
- * spoken ([setPending]). After [resetAfterMs] of silence the next text starts afresh.
+ * spoken ([setPending]). Each can say who is speaking. After [resetAfterMs] of silence the
+ * next text starts afresh.
  */
 class SentenceBuffer(
     private val maxSentences: Int = 6,
     private val resetAfterMs: Long = 8_000,
     private val clock: () -> Long,
 ) {
-    private val done = ArrayDeque<String>()
+    private val done = ArrayDeque<Sentence>()
     private val open = StringBuilder()
+    private var openSpeaker: SpeakerInfo? = null
     private var pending = ""
+    private var pendingSpeaker: SpeakerInfo? = null
     private var lastUpdate = Long.MIN_VALUE / 2
 
     /** A finished piece of text: every sentence in it is complete. */
-    fun commit(text: String) {
+    fun commit(text: String, speaker: SpeakerInfo? = null) {
         touch()
         closeOpen()
-        addDone(Sentences.split(text))
+        addDone(Sentences.split(text), speaker)
         pending = ""
+        pendingSpeaker = null
     }
 
     /** Streaming final text, exactly as received (fragments carry their own spaces). */
-    fun append(fragment: String) {
+    fun append(fragment: String, speaker: SpeakerInfo? = null) {
         if (fragment.isEmpty()) return
         touch()
+        if (speaker != null) openSpeaker = speaker
         open.append(fragment)
         pending = ""
+        pendingSpeaker = null
         val ends = Sentences.boundaries(open.toString(), streaming = true)
         if (ends.isNotEmpty()) {
             val text = open.toString()
-            addDone(Sentences.split(text.substring(0, ends.last())))
+            addDone(Sentences.split(text.substring(0, ends.last())), openSpeaker)
             open.setLength(0)
             open.append(text.substring(ends.last()).trimStart())
         }
     }
 
     /** The words being spoken now; replaced by the next guess, cleared by [commit] or [append]. */
-    fun setPending(text: String) {
+    fun setPending(text: String, speaker: SpeakerInfo? = null) {
         touch()
         pending = text.trim()
+        if (speaker != null) pendingSpeaker = speaker
     }
 
     /** The speaker paused: what was being said is a finished sentence. */
@@ -157,21 +188,23 @@ class SentenceBuffer(
     fun clear() {
         done.clear()
         open.setLength(0)
+        openSpeaker = null
         pending = ""
+        pendingSpeaker = null
     }
 
     fun snapshot(): SentenceSnapshot {
         val current = listOf(open.toString().trim(), pending).filter { it.isNotEmpty() }.joinToString(" ")
-        return SentenceSnapshot(done.toList(), current, current.length - pending.length)
+        return SentenceSnapshot(done.toList(), current, current.length - pending.length, pendingSpeaker ?: openSpeaker)
     }
 
     private fun closeOpen() {
-        if (open.isNotBlank()) addDone(Sentences.split(open.toString()))
+        if (open.isNotBlank()) addDone(Sentences.split(open.toString()), openSpeaker)
         open.setLength(0)
     }
 
-    private fun addDone(sentences: List<String>) {
-        for (s in sentences) if (s.isNotBlank()) done.addLast(s)
+    private fun addDone(sentences: List<String>, speaker: SpeakerInfo?) {
+        for (s in sentences) if (s.isNotBlank()) done.addLast(Sentence(s, speaker))
         while (done.size > maxSentences) done.removeFirst()
     }
 

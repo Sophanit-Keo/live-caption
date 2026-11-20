@@ -29,17 +29,33 @@ object ModelManager {
         context: Context,
         language: SpeechLanguage,
         onProgress: (Int) -> Unit,
+    ): File = ensureModel(context, language.modelName, language.url, language.sizeMb, onProgress)
+
+    /** Vosk's speaker model: voiceprints that tell different speakers apart (13 MB, any language). */
+    const val SPEAKER_MODEL = "vosk-model-spk-0.4"
+    private const val SPEAKER_MODEL_URL = "https://alphacephei.com/vosk/models/$SPEAKER_MODEL.zip"
+
+    suspend fun ensureSpeakerModel(context: Context, onProgress: (Int) -> Unit): File =
+        ensureModel(context, SPEAKER_MODEL, SPEAKER_MODEL_URL, sizeMb = 14, onProgress)
+
+    /** Downloads a zipped model from [url] and unpacks it as models/[name]. */
+    suspend fun ensureModel(
+        context: Context,
+        name: String,
+        url: String,
+        sizeMb: Int,
+        onProgress: (Int) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val root = modelsDir(context).apply { mkdirs() }
-        val target = File(root, language.modelName)
+        val target = File(root, name)
         if (target.isDirectory) return@withContext target
 
-        val zip = File(context.cacheDir, "${language.modelName}.zip")
-        val staging = File(root, "${language.modelName}.tmp")
+        val zip = File(context.cacheDir, "$name.zip")
+        val staging = File(root, "$name.tmp")
         try {
             var lastPercent = -1
-            downloadFile(language.url, zip) { done ->
-                val percent = (done * 100 / (language.sizeMb * 1024L * 1024L)).toInt().coerceAtMost(99)
+            downloadFile(url, zip) { done ->
+                val percent = (done * 100 / (sizeMb * 1024L * 1024L)).toInt().coerceAtMost(99)
                 if (percent != lastPercent) {
                     lastPercent = percent
                     onProgress(percent)
@@ -50,7 +66,7 @@ object ModelManager {
             zip.inputStream().use { unzip(it, staging) }
             // Archives contain a single top-level folder holding the model.
             val inner = staging.listFiles()?.singleOrNull { it.isDirectory } ?: staging
-            if (!inner.renameTo(target)) throw IOException("Could not install speech model")
+            if (!inner.renameTo(target)) throw IOException("Could not install the model")
             target
         } finally {
             zip.delete()

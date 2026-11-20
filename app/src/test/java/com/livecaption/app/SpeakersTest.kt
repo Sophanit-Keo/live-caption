@@ -143,49 +143,66 @@ class SpeakersTest {
     }
 
     /**
-     * Real voiceprints from 40 LibriSpeech readers, up to 50 recordings each (exported by the
-     * calibration script). Runs only when SPEAKERS_DATA points at that file: simulates
-     * conversations of 2–4 people taking turns and reports how often each sentence is given to
-     * the right person, and how often the right number of people is found.
+     * Real voiceprints from LibriSpeech readers (exported by the calibration script), one line
+     * per sentence: `speaker[:session],pitch,frames,numbers`. Runs only when SPEAKERS_DATA points
+     * at that file: replays conversations of 2–4 people taking turns and reports how often each
+     * sentence is given to the right person, and how often the right number of people is found.
+     * "One session" uses one recording session per person, like one video; "mixed" uses all of
+     * a person's sessions, recorded on different days, which is harder.
      */
     @Test
     fun realVoiceprintsInSimulatedConversations() {
         val path = System.getProperty("speakers.data").orEmpty()
         assumeTrue(path.isNotEmpty() && File(path).isFile)
         val segs = File(path).readLines().filter { it.isNotBlank() }.map { line ->
-            val (spk, pitch, frames, vec) = line.split(',')
-            Seg(spk.toInt(), pitch.toFloat(), frames.toInt(), vec.trim().split(' ').map { it.toFloat() }.toFloatArray())
+            val (who, pitch, frames, vec) = line.split(',')
+            val speaker = who.substringBefore(':').toInt()
+            val session = who.substringAfter(':', "0").toLong()
+            Seg(speaker, session, pitch.toFloat(), frames.toInt(), vec.trim().split(' ').map { it.toFloat() }.toFloatArray())
         }
+        // SPEAKERS_SWEEP=1 tries other settings (clearly-new 1.0 means no waiting for a second sentence).
         val settings = if (System.getProperty("speakers.sweep") == "1") {
-            listOf(0.4f, 0.45f, 0.5f, 0.55f).flatMap { t ->
-                listOf(100, 200).flatMap { m -> listOf(0.15f, 0.2f, 0.25f, 1f).map { n -> Triple(t, m, n) } }
+            listOf(0.45f, 0.5f, 0.55f, 0.6f).flatMap { t ->
+                listOf(100, 200).flatMap { m -> listOf(0.2f, 0.25f, 1f).map { n -> Setting(t, m, n) } }
             }
         } else {
-            listOf(Triple(SpeakerTracker.DEFAULT_THRESHOLD, SpeakerTracker.MIN_FRAMES, SpeakerTracker.CLEARLY_NEW_BELOW))
+            listOf(Setting(SpeakerTracker.DEFAULT_THRESHOLD, SpeakerTracker.MIN_FRAMES, SpeakerTracker.CLEARLY_NEW_BELOW))
         }
         for ((threshold, minFrames, clearlyNew) in settings) {
-            for (people in 2..4) {
-                val r = simulate(segs, people) { SpeakerTracker(threshold = threshold, minFrames = minFrames, clearlyNewBelow = clearlyNew) }
-                println(
-                    "SPEAKERS t=$threshold min=$minFrames new<$clearlyNew $people people: " +
-                        "${pct(r.right, r.total)} of sentences to the right person; right number of people " +
-                        "${pct(r.exact, r.trials)}, too many ${pct(r.tooMany, r.trials)}, too few ${pct(r.tooFew, r.trials)} of conversations",
-                )
-                if (settings.size == 1 && people == 2) {
-                    assertTrue("2 people: ${pct(r.right, r.total)}", r.right >= r.total * 0.9)
+            for (oneSession in listOf(true, false)) {
+                for (people in 2..4) {
+                    val r = simulate(segs, people, oneSession) {
+                        SpeakerTracker(threshold = threshold, minFrames = minFrames, clearlyNewBelow = clearlyNew)
+                    }
+                    println(
+                        "SPEAKERS t=$threshold min=$minFrames new<$clearlyNew ${if (oneSession) "one-session" else "mixed"} " +
+                            "$people people: ${pct(r.right, r.total)} of sentences to the right person; right number of people " +
+                            "${pct(r.exact, r.trials)}, too many ${pct(r.tooMany, r.trials)}, too few ${pct(r.tooFew, r.trials)} " +
+                            "of conversations; ${"%.1f".format(r.sentences.toDouble() / r.trials / people)} sentences per person",
+                    )
+                    if (settings.size == 1 && oneSession && people == 2) {
+                        assertTrue("2 people: ${pct(r.right, r.total)}", r.right >= r.total * 0.9)
+                    }
                 }
             }
         }
     }
 
-    private class Seg(val speaker: Int, val pitch: Float, val frames: Int, val vector: FloatArray)
+    private data class Setting(val threshold: Float, val minFrames: Int, val clearlyNew: Float)
 
-    private class Result(val right: Int, val total: Int, val exact: Int, val tooMany: Int, val tooFew: Int, val trials: Int)
+    private class Seg(val speaker: Int, val session: Long, val pitch: Float, val frames: Int, val vector: FloatArray)
+
+    private class Result(val right: Int, val total: Int, val exact: Int, val tooMany: Int, val tooFew: Int, val trials: Int) {
+        val sentences get() = total
+    }
 
     private fun pct(n: Int, of: Int) = "%.1f%%".format(100.0 * n / of)
 
-    private fun simulate(segs: List<Seg>, people: Int, trials: Int = 200, tracker: () -> SpeakerTracker): Result {
-        val bySpeaker = segs.groupBy { it.speaker }
+    private fun simulate(segs: List<Seg>, people: Int, oneSession: Boolean, trials: Int = 200, tracker: () -> SpeakerTracker): Result {
+        // With oneSession, each person speaks from one recording session with enough sentences.
+        val bySpeaker = segs.groupBy { it.speaker }.mapValues { (_, v) ->
+            if (!oneSession) v else v.groupBy { it.session }.values.filter { it.size >= 10 }.maxByOrNull { it.size }.orEmpty()
+        }.filterValues { it.isNotEmpty() }
         val rnd = Random(42)
         var right = 0
         var total = 0

@@ -80,30 +80,44 @@ immediately.
 | ![Speakers in the subtitles](docs/screenshots/speakers.png) | ![Who is speaking settings](docs/screenshots/speaker-settings.png) |
 
 - **Voice type**: each sentence gets a 👨 man, 👩 woman or 🧒 child marker, guessed on the
-  phone from the pitch of the voice (YIN pitch tracking on the captured audio).
+  phone from the pitch of the voice (YIN pitch tracking on the captured audio). Once a speaker
+  is recognised, their voice type comes from all their sentences, which is steadier than one.
 - **Speaker numbers** (Offline and Gemini engines): different people are told apart as
   Speaker 1, 2, 3… using voiceprints (x-vectors) from Vosk's 13 MB speaker model, downloaded
   once. In the subtitles, each speaker after the first gets their own colour, as in TV
-  subtitles. Gemini Live doesn't report who is speaking, so it gets voice types without numbers.
+  subtitles. A voice that is only somewhat unfamiliar becomes a new speaker when it comes back,
+  so one odd sentence (a laugh, a shout) doesn't add a person; until then it shows as the
+  closest speaker. Sentences under about a second stay with the last speaker unless the pitch
+  says otherwise. Gemini Live doesn't report who is speaking, so it gets voice types without
+  numbers.
 - **Matching voice**: the phone voice reading translations speaks lower for men and higher for
   women and children. Android doesn't say whether a voice is male or female, so the same voice
   is pitched up or down. Gemini Live imitates each speaker's voice by itself.
 - **Transcripts**: speaker labels are saved ("Speaker 2 · Woman") and appear in the transcript
   screen, in .txt and .srt exports, and in the text sent for summaries.
 
-How the thresholds were chosen, on real recordings:
+How it was tuned, on real recordings:
 
 | Check | Data | Result |
 | --- | --- | --- |
 | Man vs woman line | 222 gender-labelled Khmer recordings (Google FLEURS) | Men 112–143 Hz, women 211–236 Hz (5th–95th percentile); any line from 155 to 180 Hz was right for all; the app uses 170 Hz |
-| Same line, other voices | 40 English readers (LibriSpeech dev-clean, 20 men and 20 women) | Speakers split 20/20 at 170 Hz; single sentences fell on the wrong side 3% of the time, so voice type is judged per speaker, not per sentence |
-| Child line | Same 40 readers | One adult woman's median was 263 Hz, so "child" starts at 290 Hz |
-| Telling people apart | Same 40 readers, 456 sentences | Same person: median similarity 0.68; different people: 0.22. At the 0.45 threshold, 95% of same-person pairs match and 9% of different-person pairs look alike. In replayed conversations (about 11 sentences per person), 87% of sentences went to the right person with 2 people, 79% with 3 and 75% with 4 |
+| Voice type in the app | 60 of those recordings, through the app's own pitch tracker | 57 right, 0 wrong, 3 too quiet to judge |
+| Same line, other voices | 40 English readers (LibriSpeech dev-clean, 20 men and 20 women) | Speakers split 20/20 at 170 Hz. Single recordings fell on the other side of the line from their speaker 3–5% of the time, so voice type is judged per speaker, not per sentence |
+| Child line | Same 40 readers | One adult woman's median was 263 Hz, so "child" starts at 290 Hz. No recordings of children were available to test |
+| Comparing voiceprints | 27 of those readers, 1,457 sentences | Same person: median similarity 0.64; different people: 0.22. At the app's 0.55 threshold, 0.6% of different-people pairs look alike and 75% of same-person pairs match directly (comparing against a speaker's running average matches more) |
+| Who said each sentence | Conversations of 2, 3 or 4 of those readers taking turns, 200 of each, replayed through the app's code (about 33 sentences per person, one recording session each, like one video) | 92.9% (2 people), 91.4% (3) and 90.1% (4) of sentences got the right speaker number. With each person's sentences mixed from recordings made on different days: 92.5%, 89.8%, 88.7% |
 
-Known limits: pitch can't tell a high-voiced man from a woman, or an older child from a woman
-(children with lower voices show as women). Loud music under speech confuses it. Two similar
-voices (two men of similar age) can merge into one speaker, and one person can split into two
-when their voice changes a lot (shouting, whispering).
+Tried and not used: taking an average voiceprint (from the Khmer recordings) away before
+comparing voices didn't help on the English readers (balanced error 7.6% with and without it on
+the 27 readers; 6.1% → 6.5% on the 40), because what voiceprints share depends on the recording.
+
+Known limits: the main mistake is an extra number. In about half of the replayed 2-person
+conversations (55%), someone also showed up under a third number at some point, when a couple
+of their sentences sounded unlike the rest; overall 7% of sentences got a wrong number. Ending
+up with fewer numbers than people was rare (under 2% of conversations). Pitch can't tell a high-voiced man from a woman, or an older child from a
+woman (children with lower voices show as women). Loud music under speech confuses both. These
+numbers come from clean read speech; real videos with music, noise or overlapping voices will
+do worse.
 
 ## Transcripts and summaries
 

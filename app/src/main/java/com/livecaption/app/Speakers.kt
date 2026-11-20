@@ -143,9 +143,9 @@ class PitchTracker(private val sampleRate: Int = 16_000) {
 
 /**
  * Tells speakers apart from Vosk's voiceprints (x-vectors), one per finished sentence: a
- * sentence joins the most similar known speaker, or starts a new one. Similarity thresholds
- * come from 40 LibriSpeech readers, where the same person scored a cosine similarity of 0.69
- * (median) and different people 0.22.
+ * sentence joins the most similar known speaker, or starts a new one. On 27 LibriSpeech readers
+ * (1,457 sentences) the same person's sentences scored a cosine similarity of 0.64 (median) and
+ * different people's 0.22; 0.6% of different-people pairs reached 0.55.
  */
 class SpeakerTracker(
     private val threshold: Float = DEFAULT_THRESHOLD,
@@ -254,8 +254,20 @@ class SpeakerTracker(
     }
 
     companion object {
-        const val DEFAULT_THRESHOLD = 0.45f
+        /**
+         * Chosen by replaying conversations of 2–4 of 27 LibriSpeech readers (about 33 sentences
+         * each, one recording session per person) through this class: 0.55 gave 92.9% / 91.4% /
+         * 90.1% of sentences to the right person for 2 / 3 / 4 people, against 90.5% / 85.5% /
+         * 82.3% at 0.45.
+         * Higher thresholds split people more often; lower ones merge different people.
+         */
+        const val DEFAULT_THRESHOLD = 0.55f
         const val MIN_FRAMES = 100 // about one second of speech
+
+        /**
+         * Waiting for a second sentence before adding a person gave the same accuracy as adding
+         * them at once, but the right number of people in 35% of replayed conversations, not 9%.
+         */
         const val CLEARLY_NEW_BELOW = 0.2f
         private const val MAX_WEIGHT = 20
 

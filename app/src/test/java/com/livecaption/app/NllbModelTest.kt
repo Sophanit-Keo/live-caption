@@ -29,12 +29,14 @@ class NllbModelTest {
     @Test
     fun translatesEnglishIntoKhmerScript() {
         assumeTrue(File(dir, NllbTranslator.DECODER_FILE).isFile)
-        NllbTranslator(dir, "eng_Latn", "khm_Khmr").use { translator ->
-            for (text in listOf("hello how are you today", "the weather is very nice and i want to go to the market")) {
-                val start = System.nanoTime()
-                val result = translator.translate(text)
-                println("NLLB [${(System.nanoTime() - start) / 1_000_000} ms] $text -> $result")
-                assertTrue(result, result.count { it in 'ក'..'៿' } > result.length / 2)
+        for (beams in listOf(1, OfflineKhmerTranslator.BEAMS)) {
+            NllbTranslator(dir, "eng_Latn", "khm_Khmr", beams = beams).use { translator ->
+                for (text in listOf("Hello how are you today.", "The weather is very nice and I want to go to the market.")) {
+                    val start = System.nanoTime()
+                    val result = translator.translate(text)
+                    println("NLLB beams=$beams [${(System.nanoTime() - start) / 1_000_000} ms] $text -> $result")
+                    assertTrue(result, result.count { it in 'ក'..'៿' } > result.length / 2)
+                }
             }
         }
     }

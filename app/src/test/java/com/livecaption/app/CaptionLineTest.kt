@@ -1,6 +1,5 @@
 package com.livecaption.app
 
-import android.media.AudioDeviceInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -50,21 +49,6 @@ class CaptionLineTest {
         assertEquals(false, isContinuation("hello world", "how are you"))
         assertEquals(false, isContinuation("", "hello"))
         assertEquals(false, isContinuation("hello", ""))
-    }
-
-    @Test
-    fun voiceSpeedsUpWithBacklogButStaysIntelligible() {
-        assertEquals(1f, speechRate(0), 0.001f)
-        assertEquals(1.15f, speechRate(1), 0.001f)
-        assertEquals(1.45f, speechRate(10), 0.001f)
-    }
-
-    @Test
-    fun onlyPersonalListeningDevicesCountAsHeadphones() {
-        assertEquals(true, Headphones.isHeadphones(AudioDeviceInfo.TYPE_WIRED_HEADPHONES))
-        assertEquals(true, Headphones.isHeadphones(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
-        assertEquals(false, Headphones.isHeadphones(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER))
-        assertEquals(false, Headphones.isHeadphones(AudioDeviceInfo.TYPE_BUILTIN_EARPIECE))
     }
 
     @Test

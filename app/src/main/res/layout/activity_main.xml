@@ -53,19 +53,59 @@
             android:layout_marginBottom="16dp" />
 
         <LinearLayout
-            android:id="@+id/onlineSettings"
+            android:id="@+id/engineSettings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
             android:orientation="vertical"
             android:visibility="gone">
 
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/translation_engine"
+                android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/engine"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <Button
+                    android:id="@+id/engineDevice"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/engine_device" />
+
+                <Button
+                    android:id="@+id/engineGemini"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/engine_gemini" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <TextView
+                android:id="@+id/engineHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textAppearance="?attr/textAppearanceBodySmall" />
+
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/apiKeyLayout"
                 style="?attr/textInputOutlinedStyle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:hint="@string/api_key"
+                android:visibility="gone"
                 app:endIconMode="password_toggle">
 
                 <com.google.android.material.textfield.TextInputEditText
@@ -76,23 +116,7 @@
                     android:inputType="textPassword"
                     android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/api_key_hint"
-                android:textAppearance="?attr/textAppearanceBodySmall" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/offlineKhmerHint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:text="@string/khmer_offline_hint"
-            android:textAppearance="?attr/textAppearanceBodySmall"
-            android:visibility="gone" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -150,9 +174,40 @@
             android:id="@+id/speakHint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="8dp"
             android:text="@string/speak_hint"
             android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <LinearLayout
+            android:id="@+id/voiceSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_speed"
+                android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/voiceRate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/voice_speed"
+                android:stepSize="10"
+                android:value="100"
+                android:valueFrom="70"
+                android:valueTo="150" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/duckOthers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/duck_others" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"

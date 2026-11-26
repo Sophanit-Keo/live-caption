@@ -20,6 +20,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -61,6 +62,15 @@ class CaptionService : Service() {
 
     private val original = CaptionLine()
     private val translated = CaptionLine()
+
+    /** The latest finished sentences and their translations, sent as context to Gemini. */
+    private val history = ArrayDeque<TranslatedLine>()
+
+    /** Set when the translation service asks us to wait; nothing is sent before then. */
+    private var pausedUntil = 0L
+
+    /** After a rate-limit error the sentence in progress is not translated for a while. */
+    private var partialsPausedUntil = 0L
 
     /** Bumped at every finished sentence so late partial translations are dropped. */
     private var utterance = 0
@@ -105,8 +115,8 @@ class CaptionService : Service() {
         scope.launch {
             try {
                 run(
-                    language, targetTag, prefs.cloudApiKey, useMic, resultCode, projectionData,
-                    prefs.textSizeSp, prefs.speakTranslation,
+                    language, targetTag, prefs.useGemini, prefs.cloudApiKey, useMic, resultCode, projectionData,
+                    prefs.textSizeSp, if (prefs.speakTranslation) prefs.voiceSettings else null,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -120,12 +130,14 @@ class CaptionService : Service() {
     private suspend fun run(
         language: SpeechLanguage,
         targetTag: String?,
+        useGemini: Boolean,
         cloudApiKey: String,
         useMic: Boolean,
         resultCode: Int,
         projectionData: Intent?,
         textSizeSp: Float,
-        speakTranslation: Boolean,
+        /** Null when the translation should not be spoken. */
+        voice: VoiceSettings?,
     ) {
         // Claim the capture session right away: the consent token expires if left unused.
         val record = if (useMic) {
@@ -157,19 +169,21 @@ class CaptionService : Service() {
 
             try {
                 if (targetTag != null) {
-                    translator = when (targetTag) {
-                        KhmerTargets.GEMINI -> GeminiTranslator(this, cloudApiKey, language.label, "Khmer")
-                        KhmerTargets.OFFLINE -> OfflineKhmerTranslator(this, language.translateTag)
+                    translator = when {
+                        useGemini -> GeminiTranslator(
+                            this, cloudApiKey, languageName(language.translateTag), languageName(targetTag),
+                        )
+                        targetTag == KHMER -> OfflineKhmerTranslator(this, language.translateTag)
                         else -> MlKitTranslator(this, language.translateTag, targetTag)
                     }.also { it.prepare(::status) }
-                    if (speakTranslation) prepareSpeaker(targetTag)
+                    if (voice != null) prepareSpeaker(targetTag, voice)
                     scope.launch { translateFinals() }
                     scope.launch { translatePartials() }
                 }
 
                 CaptionState.status.value = CaptionStatus.Running
                 overlay.setStatus(getString(R.string.listening))
-                recognize(record, model)
+                recognize(record, model, language.translateTag)
             } finally {
                 model.close()
             }
@@ -179,10 +193,10 @@ class CaptionService : Service() {
     }
 
     /** Captions keep working without a voice, so a missing one is reported rather than fatal. */
-    private suspend fun prepareSpeaker(targetTag: String) {
+    private suspend fun prepareSpeaker(targetTag: String, voice: VoiceSettings) {
         status(getString(R.string.status_loading_voice))
         val locale = TranslationSpeaker.localeFor(targetTag)
-        val speaker = TranslationSpeaker(this, locale).also { this.speaker = it }
+        val speaker = TranslationSpeaker(this, locale, voice).also { this.speaker = it }
         if (!speaker.prepare()) {
             speaker.close()
             this.speaker = null
@@ -191,7 +205,7 @@ class CaptionService : Service() {
     }
 
     /** Blocking audio → text loop; runs until the service is cancelled. */
-    private suspend fun recognize(record: AudioRecord, model: Model) = withContext(Dispatchers.Default) {
+    private suspend fun recognize(record: AudioRecord, model: Model, languageTag: String) = withContext(Dispatchers.Default) {
         val recognizer = Recognizer(model, SAMPLE_RATE.toFloat())
         try {
             record.startRecording()
@@ -204,12 +218,12 @@ class CaptionService : Service() {
                 if (recognizer.acceptWaveForm(buffer, n)) {
                     lastPartial = ""
                     val text = parseVoskResult(recognizer.result, "text")
-                    if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(text.capitalizeFirst()) }
+                    if (text.isNotEmpty()) withContext(Dispatchers.Main) { onFinal(Transcript.finish(text, languageTag)) }
                 } else {
                     val partial = parseVoskResult(recognizer.partialResult, "partial")
                     if (partial.isNotEmpty() && partial != lastPartial) {
                         lastPartial = partial
-                        withContext(Dispatchers.Main) { onPartial(partial.capitalizeFirst()) }
+                        withContext(Dispatchers.Main) { onPartial(Transcript.tidy(partial, languageTag)) }
                     }
                 }
             }
@@ -232,12 +246,47 @@ class CaptionService : Service() {
         render()
     }
 
+    /**
+     * Translates finished sentences in order. Sentences that pile up while a translation
+     * is running are sent together next time (or, for slow engines, only the newest), and
+     * a busy or unreachable service is retried after a pause instead of losing the sentence.
+     */
     private suspend fun translateFinals() {
-        for (first in pendingFinals) {
-            // If translation is slower than speech, skip ahead to the newest sentence.
-            var text = first
-            while (true) text = pendingFinals.tryReceive().getOrNull() ?: break
-            val result = translate(text) ?: continue
+        val translator = translator ?: return
+        val waiting = ArrayList<String>()
+        var failures = 0
+        while (true) {
+            if (waiting.isEmpty()) waiting += pendingFinals.receive()
+            val pause = pausedUntil - SystemClock.elapsedRealtime()
+            if (pause > 0) delay(pause)
+            while (true) waiting += pendingFinals.tryReceive().getOrNull() ?: break
+
+            val batch = waiting.takeLast(if (translator.translatesBacklog) MAX_BATCH else 1)
+            val text = batch.joinToString(" ")
+            val result = try {
+                translator.translate(text, history.toList())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Translation failed", e)
+                val retry = e is TranslationException && e.retryable && ++failures <= MAX_RETRIES
+                if (e is TranslationException && e.status == 429) {
+                    // Out of requests for now: leave what is left for finished sentences.
+                    partialsPausedUntil = SystemClock.elapsedRealtime() + PARTIALS_PAUSE_MS
+                }
+                if (retry) {
+                    pauseTranslation((e as TranslationException).retryAfterMs ?: retryDelayMs(failures))
+                } else {
+                    waiting.clear()
+                    failures = 0
+                }
+                continue
+            }
+            waiting.clear()
+            failures = 0
+            if (result.isEmpty()) continue
+            history.addLast(TranslatedLine(text, result))
+            while (history.size > GeminiTranslator.MAX_HISTORY) history.removeFirst()
             translated.commit(result)
             speaker?.speak(result)
             render()
@@ -246,10 +295,25 @@ class CaptionService : Service() {
 
     /** Translates the sentence in progress; always works on the newest partial. */
     private suspend fun translatePartials() {
-        val interval = translator?.partialIntervalMs ?: return
+        val translator = translator ?: return
+        val interval = translator.partialIntervalMs ?: return
         pendingPartial.collect { (id, text) ->
             if (text.isEmpty() || id != utterance) return@collect
-            val result = translate(text) ?: return@collect
+            // Finished sentences have priority while the service asks us to slow down.
+            val now = SystemClock.elapsedRealtime()
+            if (now < pausedUntil || now < partialsPausedUntil) return@collect
+            val result = try {
+                translator.translate(text, history.toList())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Live translation failed", e)
+                if (e is TranslationException && e.status == 429) {
+                    partialsPausedUntil = SystemClock.elapsedRealtime() + PARTIALS_PAUSE_MS
+                    e.retryAfterMs?.let(::pauseTranslation)
+                }
+                return@collect
+            }
             if (id == utterance) {
                 translated.setLive(result)
                 render()
@@ -258,15 +322,9 @@ class CaptionService : Service() {
         }
     }
 
-    private suspend fun translate(text: String): String? =
-        try {
-            translator?.translate(text)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Translation failed", e)
-            null
-        }
+    private fun pauseTranslation(ms: Long) {
+        pausedUntil = maxOf(pausedUntil, SystemClock.elapsedRealtime() + ms.coerceIn(0, MAX_PAUSE_MS))
+    }
 
     private fun render() {
         val overlay = overlay ?: return
@@ -366,6 +424,15 @@ class CaptionService : Service() {
         private const val ACTION_STOP = "com.livecaption.app.STOP"
         private const val EXTRA_RESULT_CODE = "resultCode"
         private const val EXTRA_PROJECTION_DATA = "projectionData"
+
+        /** Finished sentences sent in one request when several are waiting. */
+        private const val MAX_BATCH = 3
+        private const val MAX_RETRIES = 3
+        private const val MAX_PAUSE_MS = 60_000L
+        private const val PARTIALS_PAUSE_MS = 60_000L
+
+        /** 1 s, 2 s, 4 s… between attempts when the service did not say how long to wait. */
+        fun retryDelayMs(failures: Int): Long = 1_000L shl (failures - 1).coerceIn(0, 5)
 
         /** [projectionData] is the screen-capture consent result; null for microphone mode. */
         fun start(context: Context, resultCode: Int = Activity.RESULT_CANCELED, projectionData: Intent? = null) {

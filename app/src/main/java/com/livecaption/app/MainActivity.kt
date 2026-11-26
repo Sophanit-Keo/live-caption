@@ -30,6 +30,7 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.livecaption.app.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
@@ -39,17 +40,12 @@ class MainActivity : AppCompatActivity() {
     private var headphoneWatch: AudioDeviceCallback? = null
     private var headphonesConnected = false
 
-    /** Translation targets: display name → ML Kit tag ("" = no translation). */
+    /** Translation targets: display name → language tag ("" = no translation). */
     private val targets: List<Pair<String, String>> by lazy {
         listOf(getString(R.string.no_translation) to "") +
-            (
-                TranslateLanguage.getAllLanguages()
-                    .map { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.titlecase() } to it } +
-                    listOf(
-                        getString(R.string.khmer_gemini) to KhmerTargets.GEMINI,
-                        getString(R.string.khmer_offline) to KhmerTargets.OFFLINE,
-                    )
-                ).sortedBy { it.first }
+            (TranslateLanguage.getAllLanguages() + KHMER).distinct()
+                .map { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.titlecase() } to it }
+                .sortedBy { it.first }
     }
 
     private val requestPermissions =
@@ -98,10 +94,17 @@ class MainActivity : AppCompatActivity() {
         targetLanguage.setSelection(targets.indexOfFirst { it.second == prefs.targetTag }.coerceAtLeast(0))
         targetLanguage.onSelected {
             prefs.targetTag = targets[it].second
-            onlineSettings.visibility = if (prefs.targetTag == KhmerTargets.GEMINI) View.VISIBLE else View.GONE
-            offlineKhmerHint.visibility = if (prefs.targetTag == KhmerTargets.OFFLINE) View.VISIBLE else View.GONE
+            showEngine()
             showSpeakHint()
         }
+
+        engine.check(if (prefs.useGemini) R.id.engineGemini else R.id.engineDevice)
+        engine.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            prefs.useGemini = checkedId == R.id.engineGemini
+            showEngine()
+        }
+        showEngine()
 
         apiKey.setText(prefs.cloudApiKey)
         apiKey.doAfterTextChanged { prefs.cloudApiKey = it?.toString()?.trim().orEmpty() }
@@ -122,6 +125,11 @@ class MainActivity : AppCompatActivity() {
             prefs.speakTranslation = checked
             showSpeakHint()
         }
+        voiceRate.value = ((prefs.voiceRate * 10).roundToInt() * 10).coerceIn(70, 150).toFloat()
+        voiceRate.setLabelFormatter { "${it.roundToInt()}%" }
+        voiceRate.addOnChangeListener { _, value, _ -> prefs.voiceRate = value / 100f }
+        duckOthers.isChecked = prefs.duckOtherAudio
+        duckOthers.setOnCheckedChangeListener { _, checked -> prefs.duckOtherAudio = checked }
 
         textSize.value = prefs.textSizeSp.coerceIn(textSize.valueFrom, textSize.valueTo)
         textSize.addOnChangeListener { _, value, _ -> prefs.textSizeSp = value }
@@ -141,8 +149,22 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
+    /** Shows the engine choice, its explanation and, for Gemini, the key field. */
+    private fun showEngine() = with(binding) {
+        engineSettings.visibility = if (prefs.targetTag.isEmpty()) View.GONE else View.VISIBLE
+        apiKeyLayout.visibility = if (prefs.useGemini) View.VISIBLE else View.GONE
+        engineHint.setText(
+            when {
+                prefs.useGemini -> R.string.api_key_hint
+                prefs.targetTag == KHMER -> R.string.khmer_offline_hint
+                else -> R.string.engine_device_hint
+            },
+        )
+    }
+
     /** Explains the spoken-translation switch, and what it is waiting for once it is on. */
     private fun showSpeakHint() {
+        binding.voiceSettings.visibility = if (prefs.speakTranslation) View.VISIBLE else View.GONE
         binding.speakHint.setText(
             when {
                 !prefs.speakTranslation -> R.string.speak_hint
@@ -168,7 +190,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri()))
             return
         }
-        if (prefs.targetTag == KhmerTargets.GEMINI && prefs.cloudApiKey.isEmpty()) {
+        if (prefs.targetTag.isNotEmpty() && prefs.useGemini && prefs.cloudApiKey.isEmpty()) {
             toast(R.string.need_api_key)
             return
         }
@@ -197,7 +219,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Settings are read when captions start, so lock them while running.
         val editable = !status.isActive
-        listOf(sourceLanguage, targetLanguage, apiKeyLayout, sourceDevice, sourceMic, showOriginal, speakTranslation, textSize)
+        listOf(
+            sourceLanguage, targetLanguage, engineDevice, engineGemini, apiKeyLayout, sourceDevice, sourceMic,
+            showOriginal, speakTranslation, voiceRate, duckOthers, textSize,
+        )
             .forEach { it.isEnabled = editable }
     }
 

@@ -65,5 +65,3 @@ fun parseVoskResult(json: String, key: String): String =
     } catch (e: Exception) {
         ""
     }
-
-fun String.capitalizeFirst(): String = replaceFirstChar { it.titlecase() }

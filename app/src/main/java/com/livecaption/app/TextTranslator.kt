@@ -82,7 +82,7 @@ class OfflineKhmerTranslator(private val context: Context, private val sourceTag
         }
         onStatus(context.getString(R.string.status_loading_khmer))
         nllb = withContext(Dispatchers.Default) {
-            NllbTranslator(dir, source, NllbTranslator.LANGUAGE_CODES.getValue(TargetLanguage.KHMER))
+            NllbTranslator(dir, source, NllbTranslator.LANGUAGE_CODES.getValue(TargetLanguage.KHMER), beams = NllbTranslator.BEAMS)
         }
     }
 

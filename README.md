@@ -188,6 +188,12 @@ button. Speech Services by Google includes Khmer.
 - **Chinese and Japanese**: the word spaces that speech recognition inserts are removed.
 - **Offline Khmer**: the model's space after every word is replaced by invisible joiners, so it
   reads like normal Khmer. Decoding loops are cut.
+- **Offline Khmer beam search**: NLLB keeps two candidate translations and returns the more
+  likely complete one, instead of always taking the single most likely next word. On 100
+  caption-length English sentences from the FLORES-200 test set, given lowercase and without
+  punctuation like speech-recognition output, chrF (character overlap with professional Khmer
+  translations) rose from 44.2 to 46.0, better in all of 1,000 resampled test sets. Each
+  sentence takes about a quarter longer; four candidates scored no better.
 
 ## Build
 
@@ -225,11 +231,16 @@ real voiceprints when `SPEAKERS_DATA` points at a file of exported voiceprints
 - **Blocked apps**: apps can opt out of audio capture. Phone/VoIP calls and some streaming and
   music apps cannot be captioned from device audio; use Microphone mode.
 - **Spoken language (Offline and Gemini)**: it must be chosen up front, and small Vosk models
-  favour speed over accuracy.
+  favour speed over accuracy. Vosk's larger English model (`vosk-model-en-us-0.22-lgraph`,
+  128 MB) made about a quarter fewer word errors on LibriSpeech (7.6% vs 10.1% on clean speech,
+  17.1% vs 21.1% on harder speech) but needed 4.3 times the processing, more than most phones
+  can keep up with live, so the app keeps the small models.
 - **Gemini Live is a preview model**: Google may change it. The app reconnects about every 10
   minutes when Google ends the connection, which can cost a moment of speech.
-- **Offline Khmer** needs a 910 MB download and takes a few seconds per sentence. NLLB-200 is
-  licensed CC-BY-NC 4.0 (non-commercial use only).
+- **Offline Khmer** needs a 910 MB download and takes a few seconds per sentence. Most of that
+  time goes on the published model file converting its whole 256,000-entry vocabulary table
+  from 8-bit to 32-bit numbers for every word it writes; fixing that needs a re-exported model.
+  NLLB-200 is licensed CC-BY-NC 4.0 (non-commercial use only).
 
 ## Code map
 
@@ -251,6 +262,6 @@ real voiceprints when `SPEAKERS_DATA` points at a file of exported voiceprints
 | `Gemini` | Shared Gemini API calls and model fallback; `Summarizer` |
 | `TranscriptsActivity`, `TranscriptActivity` | Saved sessions; one transcript with summary, share and save |
 | `Languages`, `TextTidy` | Target language catalog per engine; text clean-up |
-| `NllbTranslator`, `NllbTokenizer` | Offline NLLB-200 inference and its tokenizer |
+| `NllbTranslator`, `NllbTokenizer` | Offline NLLB-200 inference (greedy or beam search) and its tokenizer |
 | `ModelManager` | Downloads and unpacks speech models |
 | `CaptionLine` | Rolling subtitle text buffers |

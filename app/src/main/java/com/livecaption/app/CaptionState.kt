@@ -12,4 +12,13 @@ sealed interface CaptionStatus {
 
 object CaptionState {
     val status = MutableStateFlow<CaptionStatus>(CaptionStatus.Idle)
+
+    /** The floating captions ignore touches (see [CaptionOverlay.setLocked]). */
+    val locked = MutableStateFlow(false)
+
+    /** Id of the transcript being recorded right now, if any. */
+    val currentTranscript = MutableStateFlow<String?>(null)
+
+    /** Bumped after every line added to [currentTranscript], so open screens can refresh. */
+    val transcriptVersion = MutableStateFlow(0L)
 }

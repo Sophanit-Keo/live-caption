@@ -1,160 +1,140 @@
 package com.livecaption.app
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.util.Collections
-import kotlin.concurrent.thread
+import java.util.concurrent.TimeUnit
 
 class GeminiTranslatorTest {
 
-    private val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
-    private val endpoint get() = "http://127.0.0.1:${server.localPort}/v2"
+    private lateinit var server: MockWebServer
+    private val khmer = TargetLanguage("km", null, "km")
 
-    private val requestBodies: MutableList<JSONObject> = Collections.synchronizedList(ArrayList())
-    private var requestKey: String? = null
+    @Before
+    fun setUp() {
+        server = MockWebServer().apply { start() }
+    }
 
     @After
-    fun tearDown() = server.close()
+    fun tearDown() = server.shutdown()
 
-    /** Answers the next HTTP requests in order with [replies] (status, body), recording what was sent. */
-    private fun respond(vararg replies: Pair<Int, String>) {
-        thread(isDaemon = true) {
-            for ((status, body) in replies) {
-                server.accept().use { socket ->
-                    val input = socket.getInputStream().buffered()
-                    val headers = mutableMapOf<String, String>()
-                    while (true) {
-                        val line = buildString {
-                            while (true) {
-                                val c = input.read()
-                                if (c < 0 || c == '\n'.code) break
-                                if (c != '\r'.code) append(c.toChar())
-                            }
-                        }
-                        if (line.isEmpty()) break
-                        val colon = line.indexOf(':')
-                        if (colon > 0) headers[line.substring(0, colon).lowercase()] = line.substring(colon + 1).trim()
-                    }
-                    val content = input.readNBytes(headers.getValue("content-length").toInt())
-                    requestBodies.add(JSONObject(content.toString(Charsets.UTF_8)))
-                    requestKey = headers["x-goog-api-key"]
+    private fun translator(target: TargetLanguage = khmer) =
+        GeminiTranslator("my-key", "English (US)", target, baseUrl = server.url("/").toString().trimEnd('/'))
 
-                    val bytes = body.toByteArray()
-                    socket.getOutputStream().apply {
-                        write("HTTP/1.1 $status X\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
-                        write(bytes)
-                        flush()
-                    }
-                }
-            }
-        }
+    private fun reply(text: String) = MockResponse().setBody(
+        """{"candidates":[{"content":{"role":"model","parts":[{"text":"$text\n"}]}}]}""",
+    )
+
+    private fun error(code: Int, message: String) =
+        MockResponse().setResponseCode(code).setBody("""{"error":{"code":$code,"message":"$message"}}""")
+
+    private fun takeJson(): Pair<String, JSONObject> {
+        val request = server.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("my-key", request.getHeader("x-goog-api-key"))
+        return request.path!! to JSONObject(request.body.readUtf8())
     }
 
-    private fun translator() = GeminiTranslator(null, "my-key", "English", "Khmer", endpoint)
-
-    private fun reply(text: String) = 200 to """{"candidates":[{"content":{"role":"model","parts":[{"text":"$text\n"}]}}]}"""
-
     @Test
-    fun sendsTextAndReturnsKhmerTranslation() {
-        respond(reply("សួស្តី​ពិភពលោក"))
-        val result = runBlocking { translator().translate("Hello world") }
-        assertEquals("សួស្តី​ពិភពលោក", result)
-        assertEquals("my-key", requestKey)
-        val request = requestBodies.single()
-        val sent = request.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0)
-        assertEquals("Hello world", sent.getString("text"))
-        val instruction = request.getJSONObject("system_instruction").getJSONArray("parts").getJSONObject(0)
-        assertTrue(instruction.getString("text").contains("from English into Khmer"))
-        // Deprecated by Google and ignored by current models; thinking is kept short for speed.
-        val config = request.getJSONObject("generationConfig")
+    fun sendsContextAndReturnsTheTranslation() = runBlocking {
+        server.enqueue(reply("ខ្ញុំសុខសប្បាយ។"))
+        val context = listOf(TranslatedLine("Hello there.", "សួស្តី។"))
+        val result = translator().translate("I am fine", context)
+        assertEquals("ខ្ញុំសុខសប្បាយ។", result)
+
+        val (path, body) = takeJson()
+        assertEquals("/v1beta/models/gemini-3.5-flash-lite:generateContent", path)
+        val userText = body.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text")
+        assertTrue(userText, userText.contains("Hello there. => សួស្តី។"))
+        assertTrue(userText, userText.endsWith("Translate this caption:\nI am fine"))
+        val instruction = body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
+        assertTrue(instruction.contains("from English (US) into Khmer"))
+        assertTrue(instruction.contains("Do not put spaces between Khmer words"))
+        // Deprecated sampling parameters must not be sent (newer models reject them).
+        val config = body.getJSONObject("generationConfig")
         assertFalse(config.has("temperature"))
-        assertEquals("low", config.getJSONObject("thinkingConfig").getString("thinkingLevel"))
+        assertFalse(config.has("thinkingConfig")) // Flash-Lite already thinks minimally.
     }
 
     @Test
-    fun sendsEarlierSentencesAsConversationContext() {
-        respond(reply("គាត់​ទៅ​ផ្សារ"))
-        val history = (1..6).map { TranslatedLine("Sentence $it.", "ប្រយោគ $it") }
-        runBlocking { translator().translate("He went to the market.", history) }
-        val contents = requestBodies.single().getJSONArray("contents")
-        // The last four pairs, then the new sentence last.
-        assertEquals(GeminiTranslator.MAX_HISTORY * 2 + 1, contents.length())
-        val roles = (0 until contents.length()).map { contents.getJSONObject(it).getString("role") }
-        assertEquals(listOf("user", "model", "user", "model", "user", "model", "user", "model", "user"), roles)
-        val text = { i: Int -> contents.getJSONObject(i).getJSONArray("parts").getJSONObject(0).getString("text") }
-        assertEquals("Sentence 3.", text(0))
-        assertEquals("ប្រយោគ 3", text(1))
-        assertEquals("He went to the market.", text(8))
+    fun prepareFallsBackWhenAModelIsUnavailable() = runBlocking {
+        server.enqueue(error(404, "models/gemini-3.5-flash-lite is not found"))
+        server.enqueue(reply("សួស្តី"))
+        val t = translator()
+        t.prepare {}
+        assertEquals("gemini-flash-latest", t.modelId)
+        takeJson()
+        val (path, body) = takeJson()
+        assertEquals("/v1beta/models/gemini-flash-latest:generateContent", path)
+        assertEquals("low", body.getJSONObject("generationConfig").getJSONObject("thinkingConfig").getString("thinkingLevel"))
     }
 
     @Test
-    fun retriesWithoutThinkingSettingWhenTheModelRejectsIt() {
-        respond(
-            400 to """{"error":{"code":400,"message":"Thinking level is not supported for this model."}}""",
-            reply("សួស្តី"),
-            reply("លា"),
+    fun prepareDropsTheThinkingLevelWhenTheModelRejectsIt() = runBlocking {
+        server.enqueue(error(404, "not found"))
+        server.enqueue(error(400, "Thinking level is not supported for this model."))
+        server.enqueue(reply("សួស្តី"))
+        translator().prepare {}
+        takeJson()
+        takeJson()
+        val (_, body) = takeJson()
+        assertFalse(body.getJSONObject("generationConfig").has("thinkingConfig"))
+    }
+
+    @Test
+    fun wrongKeyFailsWithGooglesMessage() {
+        server.enqueue(error(400, "API key not valid. Please pass a valid API key."))
+        val e = assertThrows(GeminiException::class.java) { runBlocking { translator().prepare {} } }
+        assertEquals("API key not valid. Please pass a valid API key.", e.message)
+    }
+
+    @Test
+    fun rateLimitReportsTheRetryDelay() {
+        server.enqueue(
+            MockResponse().setResponseCode(429).setBody(
+                """{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[
+                {"@type":"type.googleapis.com/google.rpc.QuotaFailure"},
+                {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"17.5s"}]}}""",
+            ),
         )
-        val translator = translator()
-        assertEquals("សួស្តី", runBlocking { translator.translate("Hello") })
-        assertEquals("លា", runBlocking { translator.translate("Goodbye") })
-        assertTrue(requestBodies[0].has("generationConfig"))
-        assertFalse(requestBodies[1].has("generationConfig"))
-        // Remembered: later requests go out without it straight away.
-        assertFalse(requestBodies[2].has("generationConfig"))
+        val e = assertThrows(RateLimitedException::class.java) { runBlocking { translator().translate("hi") } }
+        assertEquals(17_500L, e.retryAfterMs)
     }
 
     @Test
-    fun rateLimitIsRetryableWithTheRequestedDelay() {
-        respond(
-            429 to """{"error":{"code":429,"message":"Quota exceeded.","status":"RESOURCE_EXHAUSTED","details":[
-                {"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[]},
-                {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"37s"}]}}""",
-        )
-        val error = assertThrows(TranslationException::class.java) { runBlocking { translator().translate("Hello") } }
-        assertTrue(error.retryable)
-        assertEquals(429, error.status)
-        assertEquals(37_000L, error.retryAfterMs)
-        assertEquals("Quota exceeded.", error.message)
+    fun rateLimitDuringPrepareStillAcceptsTheKey() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":{"code":429,"message":"Quota"}}"""))
+        val t = translator()
+        t.prepare {}
+        assertEquals("gemini-3.5-flash-lite", t.modelId)
     }
 
     @Test
-    fun reportsTheServiceErrorMessage() {
-        respond(400 to """{"error":{"code":400,"message":"API key not valid. Please pass a valid API key."}}""")
-        val error = assertThrows(TranslationException::class.java) {
-            runBlocking { GeminiTranslator(null, "bad", "English", "Khmer", endpoint).prepare {} }
+    fun parsesRepliesAndErrors() {
+        val withThoughts = """{"candidates":[{"content":{"parts":[{"text":"plan","thought":true},{"text":" Bonjour "}]}}]}"""
+        assertEquals("Bonjour", Gemini.parseText(withThoughts))
+        val blocked = assertThrows(java.io.IOException::class.java) {
+            Gemini.parseText("""{"promptFeedback":{"blockReason":"SAFETY"}}""")
         }
-        assertEquals("API key not valid. Please pass a valid API key.", error.message)
-        assertFalse(error.retryable)
+        assertTrue(blocked.message!!.contains("SAFETY"))
+        assertNull(Gemini.parseRetryDelayMs("""{"error":{"code":429}}"""))
+        assertNull(Gemini.parseError("not json"))
     }
 
     @Test
-    fun noConnectionIsRetryable() {
-        val closedPort = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
-        val error = assertThrows(TranslationException::class.java) {
-            runBlocking { GeminiTranslator(null, "k", "English", "Khmer", "http://127.0.0.1:$closedPort/v2").translate("Hi") }
-        }
-        assertTrue(error.retryable)
-    }
-
-    @Test
-    fun parsesRetryDelays() {
-        assertEquals(1_500L, GeminiTranslator.parseRetryDelayMs("""{"error":{"details":[{"@type":"x.RetryInfo","retryDelay":"1.5s"}]}}"""))
-        assertEquals(null, GeminiTranslator.parseRetryDelayMs("""{"error":{"message":"busy"}}"""))
-        assertEquals(null, GeminiTranslator.parseRetryDelayMs("not json"))
-    }
-
-    @Test
-    fun namesLanguagesForThePrompt() {
-        assertEquals("Khmer", languageName("km"))
-        assertEquals("English", languageName("en"))
-        assertEquals("Chinese (Simplified)", languageName("zh"))
+    fun onlyKhmerGetsTheSpacingRule() {
+        val french = TargetLanguage("fr", "fr", "fr")
+        val body = JSONObject(translator(french).buildRequest(GeminiTranslator.MODELS[0], "hello", emptyList()))
+        val instruction = body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
+        assertTrue(instruction.contains("into French"))
+        assertFalse(instruction.contains("Khmer"))
     }
 }

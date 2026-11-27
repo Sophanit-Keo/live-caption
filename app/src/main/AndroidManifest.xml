@@ -9,7 +9,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
-    <!-- Lets the app find the phone's text-to-speech engine (Android 11+). -->
+    <!-- Android 11+ only lets apps see text-to-speech engines they declare here. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
@@ -33,6 +33,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".TranscriptsActivity"
+            android:exported="false"
+            android:label="@string/transcripts_title" />
+
+        <activity
+            android:name=".TranscriptActivity"
+            android:exported="false"
+            android:label="@string/transcript_lines_heading" />
 
         <service
             android:name=".CaptionService"
